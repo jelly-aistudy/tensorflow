@@ -1,0 +1,54 @@
+import tensorflow_datasets as tfds
+import tensorflow as tf
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dense, Flatten, Dropout
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+
+dataset_name = 'horses_or_humans'
+train_data = tfds.load(name=dataset_name, split='train[:80%]')
+valid_data = tfds.load(name=dataset_name, split='train[80%:]')
+
+def preprocess(data):
+    x = data['image']
+    y = data['label']
+    x = x / 255
+
+    return x, y
+
+train_dataset = train_data.map(preprocess).batch(32)
+valid_dataset = valid_data.map(preprocess).batch(32)
+
+model = Sequential([
+        Conv2D(64, (3,3), activation='relu', input_shape=(300,300,3)),
+        MaxPooling2D(2,2),
+        Conv2D(64, (3,3), activation='relu'),
+        MaxPooling2D(2,2),
+        Conv2D(128, (3,3), activation='relu'),
+        MaxPooling2D(2,2),
+        Conv2D(128, (3,3), activation='relu'),
+        MaxPooling2D(2,2),
+        Flatten(),
+        Dropout(0.5),
+        Dense(256, activation='relu'),
+        Dense(2, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['acc'])
+
+ckpath = 'my_checkpoint.ckpt'
+checkpoint = ModelCheckpoint(filepath=ckpath,
+                             save_weights_only=True,
+                             save_best_only=True,
+                             monitor='val_loss',
+                             verbose=1)
+    
+earlystop = EarlyStopping(monitor='val_loss',
+                          patience=5,
+                          verbose=1)
+    
+model.fit(train_dataset,
+          validation_data=(valid_dataset),
+          epochs=30,
+          callbacks=[checkpoint, earlystop])
+    
+model.load_weights(ckpath)
