@@ -1,0 +1,59 @@
+import tensorflow_datasets as tfds
+import tensorflow as tf
+
+from tensorflow.keras.layers import Dense, Flatten, Dropout, Conv2D, MaxPooling2D     
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+
+dataset_name = 'cats_vs_dogs'
+train_data = tfds.load(name=dataset_name, split='train[:80%]')
+valid_data = tfds.load(name=dataset_name, split='train[80%:]')
+
+def preprocess(data):
+    x = data['image']
+    y = data['label']
+    y = tf.one_hot(y, 2)
+    x = x / 255
+    x = tf.image.resize(x, size=(224,224))
+
+    return x, y
+
+train_dataset = train_data.map(preprocess).batch(32)
+valid_dataset = valid_data.map(preprocess).batch(32)
+
+model = Sequential([
+    Conv2D(64, (3,3), activation='relu', input_shape=(224,224,3)),
+    MaxPooling2D(2,2),
+    Conv2D(128, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+    Conv2D(128, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+    Conv2D(256, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+    Conv2D(256, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+    Flatten(),
+    Dropout(0.6),
+    Dense(128, activation='relu'),
+    Dense(64, activation='relu'),
+    Dense(32, activation='relu'),
+    Dense(2, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['acc'])
+
+ckpath = 'jelly.ckpt'
+checkpoint = ModelCheckpoint(filepath=ckpath,
+                             save_weights_only=True,
+                             save_best_only=True,
+                             monitor='val_loss',
+                             verbose=1)
+    
+earlystop = EarlyStopping(monitor='val_loss', patience=5)
+
+model.fit(train_dataset,
+          validation_data=(valid_dataset),
+          epochs=20,
+          callbacks=[checkpoint, earlystop])
+    
+model.load_weights(ckpath)
