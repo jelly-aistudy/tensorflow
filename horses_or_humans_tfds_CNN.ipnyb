@@ -35,7 +35,7 @@ model = Sequential([
 
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['acc'])
 
-ckpath = 'my_checkpoint.ckpt'
+ckpath = 'jelly.ckpt'
 checkpoint = ModelCheckpoint(filepath=ckpath,
                              save_weights_only=True,
                              save_best_only=True,
