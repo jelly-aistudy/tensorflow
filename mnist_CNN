@@ -1,0 +1,40 @@
+import tensorflow as tf
+from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, Flatten, Dropout, Reshape
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import ModelCheckpoint
+
+mnist = tf.keras.datasets.mnist
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+    
+x_train = x_train / 255.0
+x_test = x_test / 255.0
+
+model = Sequential([
+                    Reshape((28, 28, 1), input_shape=(28, 28)),
+                    Conv2D(64, (3,3), activation='relu'),
+                    MaxPooling2D(2,2),
+                    Conv2D(128, (3,3), activation='relu'),
+                    MaxPooling2D(2,2),
+                    Conv2D(256, (3,3), activation='relu'),
+                    MaxPooling2D(2,2),
+                    Flatten(),
+                    Dense(256, activation='relu'),
+                    Dense(64, activation='relu'),
+                    Dense(10, activation='softmax'),
+])
+
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['acc'])
+
+ckpath = 'jelly.ckpt'
+checkpoint = ModelCheckpoint(filepath=ckpath,
+                             save_weights_only=True,
+                             save_best_only=True,
+                             monitor='val_loss',
+                             verbose=1)
+    
+model.fit(x_train, y_train,
+          validation_data=(x_test, y_test),
+          epochs=10,
+          callbacks=[checkpoint])
+    
+model.load_weights(checkpoint_path)
