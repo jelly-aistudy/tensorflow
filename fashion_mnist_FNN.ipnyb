@@ -1,0 +1,41 @@
+import tensorflow as tf
+from tensorflow.keras.layers import Dense, Flatten, Dropout
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+
+fashion_mnist = tf.keras.datasets.fashion_mnist
+(x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+
+x_train = x_train / 255
+x_test = x_test / 255
+y_train = tf.one_hot(y_train, 10)
+y_test = tf.one_hot(y_test, 10)
+
+model = Sequential([
+        Flatten(input_shape=(28,28)),
+        Dense(256, activation='relu'),
+        Dense(128, activation='relu'),
+        Dense(64, activation='relu'),
+        Dense(10, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['acc'])
+
+ckpath = 'jelly.ckpt'
+checkpoint = ModelCheckpoint(filepath=ckpath,
+                              save_best_only=True,
+                              save_weights_only=True,
+                              monitor='val_loss',
+                              verbose=1)
+    
+earlystop = EarlyStopping(monitor='val_loss', patience=10)
+
+BATCH_SIZE = 256
+EPOCH = 50
+model.fit(x_train, y_train,
+          validation_data=(x_test, y_test),
+          epochs=EPOCH,
+          batch_size=BATCH_SIZE,
+          callbacks=[checkpoint, earlystop])
+    
+model.load_weights(checkpoint_path)
