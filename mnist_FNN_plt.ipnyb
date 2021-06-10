@@ -1,0 +1,58 @@
+import tensorflow as tf
+import matplotlib.pyplot as plt
+
+from tensorflow.keras.layers import Dense, Flatten
+from tensorflow.keras.models import Sequential
+
+mnist = tf.keras.datasets.mnist
+(x_train, y_train), (x_test, y_test) = mnist.load_data() 
+
+x_train, x_test = x_train / 255.0, x_test / 255.0
+x_train = x_train.reshape(60000,28,28,1)
+x_test = x_test.reshape(10000,28,28,1)
+y_train = tf.one_hot(y_train, depth=10)
+y_test = tf.one_hot(y_test, depth=10)
+
+x_train, x_val = x_train[:50000], x_train[50000:]
+y_train, y_val = y_train[:50000], y_train[50000:]
+
+# input data example (index=0)
+plt.imshow(x_train[0].reshape(28,28), cmap='gray_r')
+print("input data shape : ", x_train[0].shape)
+print("input data label : ", y_train[0])
+
+model = Sequential([
+                    Flatten(input_shape=(28,28,1)),
+                    Dense(100, activation='sigmoid'),
+                    Dense(50, activation='sigmoid'),
+                    Dense(30, activation='sigmoid'),
+                    Dense(10, activation='softmax')
+])
+
+model.summary()
+
+optimizer = tf.keras.optimizers.SGD(learning_rate=0.0001)
+loss = tf.keras.losses.MeanSquaredError()
+model.compile(optimizer=optimizer, loss=loss, metrics=['acc'])
+
+EPOCHS = 20
+BATCH = 32
+history = model.fit(x=x_train, y=y_train, validation_data=(x_val, y_val), batch_size=BATCH, epochs=EPOCHS, verbose=1)
+
+# accuracy graph
+plt.figure(figsize=(5,5))
+plt.plot(range(1,EPOCHS+1), history.history['acc'], label="Train")
+plt.plot(range(1,EPOCHS+1), history.history['val_acc'], label="Validation")
+plt.title("Accuracy Graph")
+plt.xticks(range(1,EPOCHS+1), range(1,EPOCHS+1))
+plt.legend(loc=2)
+plt.show()
+
+# loss graph
+plt.figure(figsize=(5,5))
+plt.plot(range(1,EPOCHS+1), history.history['loss'], label="Train")
+plt.plot(range(1,EPOCHS+1), history.history['val_loss'], label="Validation")
+plt.title("Loss Graph")
+plt.xticks(range(1,EPOCHS+1), range(1,EPOCHS+1))
+plt.legend(loc=3)
+plt.show()
