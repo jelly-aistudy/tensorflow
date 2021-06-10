@@ -1,0 +1,45 @@
+import tensorflow as tf 
+from tensorflow.keras.layers import Dense, Flatten 
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dropout
+
+mnist = tf.keras.datasets.mnist
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+x_train, x_test = x_train / 255.0, x_test / 255.0
+x_train = x_train.reshape(60000,28,28,1)
+x_test = x_test.reshape(10000,28,28,1)
+y_train = tf.one_hot(y_train, depth=10)
+y_test = tf.one_hot(y_test, depth=10)
+
+x_train, x_val = x_train[:50000], x_train[50000:]
+y_train, y_val = y_train[:50000], y_train[50000:]
+
+model = tf.keras.models.Sequential([ 
+  Flatten(input_shape=(28,28,1)),
+  Dense(1024,activation='relu'),
+  # Dropout
+  Dropout(0.5),
+  Dense(1024,activation='relu'),
+  Dropout(0.5),
+  Dense(10,activation='softmax'),
+])
+
+model.compile(optimizer='adam',loss='categorical_crossentropy',metrics=['acc'])
+
+# Earlystopping
+early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_acc', patience=5)
+
+history = model.fit(x_train, y_train, validation_data=(x_val, y_val), batch_size=256, epochs=25, verbose=1)
+
+
+def plot_history(histories):
+  plt.figure(figsize=(9,6))
+  for history in histories:
+    plt.plot(history.epoch, history.history['loss'], label='training')
+    plt.plot(history.epoch, history.history['val_loss'], label='validation')
+  plt.xlabel('Epochs')
+  plt.ylabel('Loss')
+  plt.legend()
+  plt.xlim([0,max(history.epoch)])
+
+plot_history([history])
