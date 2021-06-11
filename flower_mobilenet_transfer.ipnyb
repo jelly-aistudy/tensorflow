@@ -1,0 +1,90 @@
+import tensorflow as tf 
+import numpy as np
+import matplotlib.pylab as plt
+from tensorflow.keras.layers import Dense
+
+!pip install -U tf-hub-nightly
+import tensorflow_hub as hub
+
+# Mobilenet
+mobilenet_url = "https://tfhub.dev/google/tf2-preview/mobilenet_v2/feature_vector/2" 
+mobilenet = tf.keras.Sequential([
+    hub.KerasLayer(mobilenet_url, input_shape=(224,224,3)), 
+    Dense(5, activation='softmax')
+])
+
+# Flower data
+flower_data = tf.keras.utils.get_file(
+  'flower_photos','https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz',
+   untar=True)
+
+# ImageDataGenerator
+image_data_generator = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1/255)
+image_data_gen = image_data_generator.flow_from_directory(str(flower_data), batch_size=32, target_size=IMAGE_SHAPE)
+
+# Accuracy and Loss for Batch
+class CollectBatchHistory(tf.keras.callbacks.Callback):
+  def __init__(self):
+    self.batch_acc = []
+    self.batch_loss = []
+
+  def on_train_batch_end(self, batch, logs=None):
+    self.batch_loss.append(logs['loss'])
+    self.batch_acc.append(logs['acc'])
+    self.model.reset_metrics()
+
+# Model Compile and Fit
+mobilenet.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['acc'])
+steps_per_epoch = np.ceil(image_data_gen.samples/image_data_gen.batch_size)
+batch_stats_callback = CollectBatchHistory()
+history = mobilenet.fit(image_data_gen, epochs=2, steps_per_epoch=steps_per_epoch, callbacks = [batch_stats_callback], verbose=1)
+
+# Loss and Accuracy
+plt.figure()
+plt.ylabel("Loss")
+plt.xlabel("Training Steps")
+plt.ylim([0,2])
+plt.plot(batch_stats_callback.batch_loss)
+
+plt.figure()
+plt.ylabel("Accuracy")
+plt.xlabel("Training Steps")
+plt.ylim([0,1])
+plt.plot(batch_stats_callback.batch_acc)
+
+# Label
+class_names = np.array(['Daisy', 'Dandelion', 'Roses', 'Sunflowers', 'Tulips'])
+
+# Inference
+for image_batch, label_batch in image_data_gen:
+  print("Image batch shape: ", image_batch.shape)
+  print("Label batch shape: ", label_batch.shape)
+  break
+
+predicted_batch = mobilenet.predict(image_batch)
+predicted_id = np.argmax(predicted_batch, axis=-1)
+predicted_label_batch = class_names[predicted_id]
+true_label_id = np.argmax(label_batch, axis=-1)
+
+plt.figure(figsize=(10,9))
+plt.subplots_adjust(hspace=0.5)
+for n in range(30):
+  plt.subplot(6,5,n+1)
+  plt.imshow(image_batch[n])
+  color = "green" if predicted_id[n] == true_label_id[n] else "red"
+  plt.title(predicted_label_batch[n].title(), color=color)
+  plt.axis('off')
+_ = plt.suptitle("Model predictions (green: correct, red: incorrect)")
+
+# Model export and import
+model_name = 'mobilenet_transfer_model'
+export_path = "/tmp/saved_models/"+model_name
+mobilenet.save(export_path)
+
+reloaded_model = tf.keras.models.load_model(export_path)
+reloaded_result = reloaded_model.predict(image_batch)
+
+reloaded_predicted_batch = reloaded_model.predict(image_batch)
+reloaded_predicted_id = np.argmax(predicted_batch, axis=-1)
+reloaded_predicted_label_batch = class_names[predicted_id]
+print(reloaded_predicted_label_batch)
