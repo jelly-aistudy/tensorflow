@@ -1,0 +1,47 @@
+!pip install konlpy
+!pip install jpype1==0.7.0
+!wget https://korquad.github.io/dataset/KorQuAD_v1.0_train.json
+
+import json
+import random
+from konlpy.tag import Komoran
+from tqdm import tqdm
+from collections import Counter
+
+with open("/content/KorQuAD_v1.0_train.json") as f:
+  datas = json.loads(f.read())
+
+KOREAN_WIKI = []
+for data in datas["data"]:
+  for wiki in data["paragraphs"]:
+    KOREAN_WIKI.append(wiki["context"])
+
+# data split
+random.seed(10)
+random.shuffle(KOREAN_WIKI)
+WIKI_train = KOREAN_WIKI[:8000]
+WIKI_val = KOREAN_WIKI[8000:]
+
+# tokinize with komoran
+komoran = Komoran()
+def tokenize(sentence):
+  return komoran.morphs(sentence)
+  
+vocab_freq = Counter()
+TOKEN_WIKI_train = []
+for i, x in tqdm(enumerate(WIKI_train)):
+  # tokenize
+  tokenized_x = tokenize(x)
+  TOKEN_WIKI_train.append(tokenized_x)
+  # count token
+  for word in tokenized_x:
+    vocab_freq[word] += 1
+    
+N = 70000
+most_common = vocab_freq.most_common(len(vocab_freq))
+# most_common[:10] : most frequently used tokens
+# most_common[-10:] : least frequently used tokens
+
+vocab_list = [word[0] for word in most_common[:N]]
+vocabulary_list = ["[PAD]", "[UNK]"]
+vocabulary_list.extend(vocab_list)
