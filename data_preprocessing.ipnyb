@@ -1,14 +1,9 @@
 import tensorflow as tf
-from tensorflow.keras.datasets import mnist
-from tensorflow.keras import layers
 import tensorflow_datasets as tfds
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
 # rcParams['figure.figsize']: set default figure size
 matplotlib.rcParams['figure.figsize'] = (12, 5)
-# autotune: prompt the tf.data runtime to tune the value dynamically at runtime while prefetching
-AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 # https://www.tensorflow.org/datasets/catalog/tf_flowers
 train_set, info = tfds.load(
