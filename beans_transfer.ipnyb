@@ -1,0 +1,163 @@
+!pip install tensorflow_datasets --upgrade
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, InputLayer
+from tensorflow.keras.models import Sequential
+from tensorflow.keras import optimizers
+from tensorflow.keras.models import Model
+tfds.disable_progress_bar()
+AUTOTUNE = tf.data.experimental.AUTOTUNE # prompt the tf.data runtime to tune the value dynamically at runtime
+
+# load data
+(train_set, val_set, test_set), info =  tfds.load(
+    'Beans',
+    split=('train','validation', 'test'),
+    as_supervised=True, # if True, the returned tf.data.Dataset will have a 2-tuple structure (input, label)
+    with_info=True,
+)
+
+# check data (visualization)
+get_label_name = info.features['label'].int2str
+for image, label in train_set.take(5):
+    plt.figure()
+    plt.imshow(image)
+    plt.title(get_label_name(label))
+
+# check data (whether normalized)
+for image, label in train_set.take(1):
+    pass
+print(tf.math.reduce_max(image), tf.math.reduce_min(image)) # maximum size, minimum size
+print(image.shape) # image shape
+
+# data preprocess: change data type and normalize
+def convert(image, label):
+    image = tf.cast(image, tf.float32)
+    image = image/255.0
+    return image, label
+
+BATCH_SIZE = 32
+num_train = info.splits['train'].num_examples 
+
+train_batches = (
+    train_set
+    .shuffle(num_train)
+    .map(convert, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+    .prefetch(AUTOTUNE)
+) 
+
+val_batches = (
+    val_set
+    .map(convert, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+)
+
+test_batches = (
+    test_set
+    .map(convert, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+)
+
+IMG_SHAPE = (500,500,3)
+
+##### 1. without pretrained weights
+vgg_no_weight = tf.keras.applications.VGG16(input_shape=IMG_SHAPE,
+                                         include_top=False,
+                                         weights=None)
+output = vgg_no_weight.layers[-1].output
+output = tf.keras.layers.Flatten()(output)
+vgg_first = Model(vgg_no_weight.input, output)
+
+layers = [(layer, layer.name, layer.trainable) for layer in vgg_first.layers]
+pd.DataFrame(layers, columns=['Layer Type', 'Layer Name', 'Layer Trainable'])
+
+tf.random.set_seed(1)
+model_no_weight = Sequential()
+model_no_weight.add(vgg_first)
+model_no_weight.add(Dense(128, activation='relu'))
+model_no_weight.add(Dense(128, activation='relu'))
+model_no_weight.add(Dense(3))
+
+model_no_weight.compile(optimizer = optimizers.Adagrad(learning_rate=0.001),
+               loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+               metrics='accuracy')
+aug_history = model_no_weight.fit(train_batches, epochs=5, validation_data=val_batches)
+
+##### 2. with pretrained weights, feature extractor
+vgg_weight1 = tf.keras.applications.VGG16(input_shape=IMG_SHAPE,
+                                      include_top=False,
+                                      weights='imagenet') 
+                                      
+output = vgg_weight1.layers[-1].output
+output = tf.keras.layers.Flatten()(output)
+vgg_second = Model(vgg_weight1.input, output)
+
+vgg_second.trainable = False # freeze
+layers = [(layer, layer.name, layer.trainable) for layer in vgg_second.layers]
+pd.DataFrame(layers, columns=['Layer Type', 'Layer Name', 'Layer Trainable'])   
+
+tf.random.set_seed(1)
+model_feat_ext = Sequential()
+model_feat_ext.add(vgg_second)
+model_feat_ext.add(Dense(128, activation='relu'))
+model_feat_ext.add(Dense(128, activation='relu'))
+model_feat_ext.add(Dense(3)) 
+
+model_feat_ext.compile(optimizer = optimizers.Adagrad(learning_rate=0.001),
+               loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+               metrics='accuracy')
+history = model_feat_ext.fit(train_batches, epochs=5, validation_data=val_batches)
+
+##### 3. with pretrained weights, fine tuning
+vgg_weight2 = tf.keras.applications.VGG16(input_shape=IMG_SHAPE,
+                                      include_top=False,
+                                      weights='imagenet')
+                                      
+output = vgg_weight2.layers[-1].output
+output = tf.keras.layers.Flatten()(output)
+vgg_third = Model(vgg_weight2.input, output)
+
+vgg_third.trainable = False
+# for fine tuning
+set_trainable = False
+for layer in vgg_third.layers:
+    if layer.name in ['block5_conv1']:
+        set_trainable = True
+    if set_trainable:
+        layer.trainable = True
+
+layers = [(layer, layer.name, layer.trainable) for layer in vgg_third.layers]
+pd.DataFrame(layers, columns=['Layer Type', 'Layer Name', 'Layer Trainable'])
+
+tf.random.set_seed(1)
+model_fine_tune = Sequential()
+model_fine_tune.add(vgg_third)
+model_fine_tune.add(Dense(128, activation='relu'))
+model_fine_tune.add(Dense(128, activation='relu'))
+model_fine_tune.add(Dense(3))
+
+model_fine_tune.compile(optimizer = optimizers.Adagrad(learning_rate=0.001),
+               loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+               metrics='accuracy')
+aug_history = model_fine_tune.fit(train_batches, epochs=5, validation_data=val_batches)
+
+# predict with fine tuning model
+pred_batch = model_fine_tune.predict(test_batches)
+pred_label = np.argmax(pred_batch, axis=-1)
+
+temp_test = tfds.as_numpy(test_set)
+true_img = np.array([x[0] for x in temp_test])
+true_label = np.array([x[1] for x in temp_test])
+
+plt.figure(figsize=(20,16))
+plt.subplots_adjust(hspace=0.3)
+for n in range(20):
+    plt.subplot(5,4,n+1)
+    plt.imshow(true_img[n])
+    color = "green" if pred_label[n] == true_label[n] else "red"
+    plt.title(get_label_name(pred_label[n]).title(), color=color)
+    plt.axis('off')
+_ = plt.suptitle("Model predictions (green: correct, red: incorrect)")
