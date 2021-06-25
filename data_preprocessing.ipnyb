@@ -1,0 +1,63 @@
+import tensorflow as tf
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras import layers
+import tensorflow_datasets as tfds
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+# rcParams['figure.figsize']: set default figure size
+matplotlib.rcParams['figure.figsize'] = (12, 5)
+# autotune: prompt the tf.data runtime to tune the value dynamically at runtime while prefetching
+AUTOTUNE = tf.data.experimental.AUTOTUNE
+
+# https://www.tensorflow.org/datasets/catalog/tf_flowers
+train_set, info = tfds.load(
+    'tf_flowers',
+    split='train',
+    # with_info: bool type. if True, tfds.load will return the tuple (tf.data.Dataset, tfds.core.DatasetInfo), the latter containing the info associated with the builder.
+    with_info=True,
+    # as_supervised: bool type. if True, the returned tf.data.Dataset will have a 2-tuple structure (input, label)
+    as_supervised=True,
+)
+
+# deletable (check train set, check info)
+for x in train_set.take(1):
+  print(x)
+print(info)
+
+# check train set visually
+get_label_name = info.features['label'].int2str
+image, label = next(iter(train_set))
+_ = plt.imshow(image)
+_ = plt.title(get_label_name(label))
+
+# common function for augmented data visualization
+def visualize(original, augmented):
+    fig = plt.figure()
+    plt.subplot(1,2,1)
+    plt.title('Original Image')
+    plt.imshow(original)
+
+    plt.subplot(1,2,2)
+    plt.title('Augmented Image')
+    plt.imshow(augmented)
+
+# flip left to right
+flipped = tf.image.flip_left_right(image)
+visualize(image, flipped)
+
+# rotate 90 degrees
+rotated = tf.image.rot90(image, k=1) # k: The number of times the image is rotated by 90 degrees
+visualize(image, rotated)
+
+# crop
+cropped = tf.image.central_crop(image, central_fraction=0.7) # central_fraction: float (0, 1], fraction of size to crop
+visualize(image,cropped)
+
+# adjust saturation
+saturated = tf.image.adjust_saturation(image, 3) # Factor to multiply the saturation by
+visualize(image, saturated)
+
+# adjust brightness
+bright = tf.image.random_brightness(image, max_delta=0.5)
+visualize(image, bright)
