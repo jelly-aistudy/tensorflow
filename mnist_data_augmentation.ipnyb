@@ -1,0 +1,124 @@
+import tensorflow as tf
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras import layers
+import tensorflow_datasets as tfds
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+# rcParams['figure.figsize']: set default figure size
+matplotlib.rcParams['figure.figsize'] = (12, 5)
+# autotune: prompt the tf.data runtime to tune the value dynamically at runtime while prefetching
+AUTOTUNE = tf.data.experimental.AUTOTUNE
+
+# load mnist data
+(train_set, val_set), info =  tfds.load('mnist', split=['train','test'], as_supervised=True, with_info=True)
+num_train = info.splits['train'].num_examples
+
+# convert image data type
+def convert(image, label):
+    image = tf.image.convert_image_dtype(image, tf.float32) 
+    return image, label
+
+# augment image data
+def augment(image, label):
+  image, label = convert(image, label)
+  # resize_with_crop_or_pad: Resizes an image to a target width and height by either centrally cropping the image or padding it evenly with zeros
+  image = tf.image.resize_with_crop_or_pad(image, 34, 34)
+  # random_crop (value, size): Slices a shape size portion out of value at a uniformly chosen offset. Requires value.shape >= size.
+  image = tf.image.random_crop(image, size=[28, 28, 1]) 
+  image = tf.image.random_brightness(image, max_delta=0.5) 
+
+  return image,label
+
+# batch
+BATCH_SIZE = 64
+NUM_EXAMPLES = 2048  
+
+# data preprocessing
+aug_train_batches = (
+    train_set
+    .take(NUM_EXAMPLES)
+    .cache()
+    .shuffle(num_train//4)
+    .map(augment, num_parallel_calls=AUTOTUNE)   # num_parallel_calls: the level of parallelism
+    .batch(BATCH_SIZE)
+    .prefetch(AUTOTUNE)
+) 
+
+no_aug_train_batches = (
+    train_set
+    .take(NUM_EXAMPLES)
+    .cache()
+    .shuffle(num_train//4)
+    .map(convert, num_parallel_calls=AUTOTUNE)   # no augmentation, only normalize
+    .batch(BATCH_SIZE)
+    .prefetch(AUTOTUNE)
+) 
+
+val_batches = (
+    val_set
+    .map(convert, num_parallel_calls=AUTOTUNE)
+    .batch(2*BATCH_SIZE)
+)
+
+# model
+no_aug_model = tf.keras.Sequential([
+    layers.Flatten(input_shape=(28, 28, 1)),
+    layers.Dense(4096, activation='relu'),
+    layers.Dense(4096, activation='relu'),
+    layers.Dense(10)
+])
+
+no_aug_model.compile(optimizer = 'adam',
+                     # from_logits: Whether y_pred is expected to be a logits tensor. By default(False), we assume that y_pred encodes a probability distribution.
+                     # It is said that [no softmax + from_logits=True] might be more stable than [softmax + from_logits=False]
+                     loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+                     metrics=['accuracy'])
+                     
+no_aug_history = no_aug_model.fit(no_aug_train_batches, epochs=40, validation_data=val_batches)
+
+aug_model = tf.keras.Sequential([
+    layers.Flatten(input_shape=(28, 28, 1)),
+    layers.Dense(4096, activation='relu'),
+    layers.Dense(4096, activation='relu'),
+    layers.Dense(10)
+])
+
+aug_model.compile(optimizer = 'adam',
+                  loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+                 metrics=['accuracy'])
+                 
+aug_history = aug_model.fit(aug_train_batches, epochs=40, validation_data=val_batches)
+
+# visualized comparison
+no_aug_acc = no_aug_history.history['accuracy']
+no_aug_val_acc = no_aug_history.history['val_accuracy']
+aug_acc = aug_history.history['accuracy']
+aug_val_acc = aug_history.history['val_accuracy']
+
+no_aug_loss = no_aug_history.history['loss']
+no_aug_val_loss = no_aug_history.history['val_loss']
+aug_loss = aug_history.history['loss']
+aug_val_loss = aug_history.history['val_loss']
+
+epochs_range = range(40)
+
+plt.figure(figsize=(8, 8))
+plt.plot(epochs_range, no_aug_acc, 'r', label='No Aug Training')
+plt.plot(epochs_range, no_aug_val_acc, '-.r', label='No Aug Validation')
+plt.plot(epochs_range, aug_acc, 'b', label='Aug Training')
+plt.plot(epochs_range, aug_val_acc, '-.b',label='Aug Validation')
+plt.legend(loc='lower right')
+plt.title('Accuracy')
+plt.ylim([0.75,1])
+plt.show()
+
+plt.figure(figsize=(8, 8))
+plt.plot(epochs_range, no_aug_loss, 'r', label='No Aug Training')
+plt.plot(epochs_range, no_aug_val_loss, '-.r', label='No Aug Validation')
+plt.plot(epochs_range, aug_loss, 'b', label='Aug Training')
+plt.plot(epochs_range, aug_val_loss, '-.b', label='Aug Validation')
+plt.legend(loc='upper right')
+plt.title('Loss')
+plt.ylim([0,1])
+plt.show()
