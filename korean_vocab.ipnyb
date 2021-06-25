@@ -4,6 +4,8 @@
 
 import json
 import random
+import tensorflow as tf
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 from konlpy.tag import Komoran
 from tqdm import tqdm
 from collections import Counter
@@ -36,6 +38,11 @@ for i, x in tqdm(enumerate(WIKI_train)):
   # count token
   for word in tokenized_x:
     vocab_freq[word] += 1
+
+TOKEN_WIKI_val = []
+for x in tqdm(WIKI_val): 
+  tokenized_x = tokenize(x)
+  TOKEN_WIKI_val.append(tokenized_x)
     
 N = 70000
 most_common = vocab_freq.most_common(len(vocab_freq))
@@ -45,3 +52,53 @@ most_common = vocab_freq.most_common(len(vocab_freq))
 vocab_list = [word[0] for word in most_common[:N]]
 vocabulary_list = ["[PAD]", "[UNK]"]
 vocabulary_list.extend(vocab_list)
+
+# convert token to id / convert id to token
+class TextEncoder(object):
+    def __init__(self, vocab_list):
+      self.pad_token = "[PAD]" # for padding
+      self.oov_token = "[UNK]" # for unknown token
+
+      token_to_id = {}
+      for i, token in enumerate(vocabulary_list):
+          token_to_id[token] = i
+
+      id_to_token = {v:k for k,v in token_to_id.items()}  
+
+      self.token_to_id = token_to_id
+      self.id_to_token = id_to_token
+      self.vocab_size = len(token_to_id)   
+      self.vocabulary_list = vocabulary_list
+    
+    def convert_tokens_to_ids(self, tokens):
+      ids = []
+
+      for token in tokens:
+        if token in self.token_to_id:
+          ids.append(self.token_to_id[token])
+        else:
+          ids.append(self.token_to_id[self.oov_token])
+      return ids
+
+    def convert_ids_to_tokens(self, ids):
+      return [self.id_to_token[i] for i in ids]
+      
+text_encoder = TextEncoder(vocabulary_list)
+
+# text_encoder example
+sent = "오늘 날씨가 아주 맑네요"
+tokenized_sent = tokenize(sent)
+print(tokenized_sent)
+print(text_encoder.convert_tokens_to_ids(tokenized_sent))
+ids = text_encoder.convert_tokens_to_ids(tokenized_sent)
+print(text_encoder.convert_ids_to_tokens(ids))
+
+# convert train tokens to ids
+ID_WIKI_train = []
+for sent in TOKEN_WIKI_train:
+  ID_WIKI_train.append(text_encoder.convert_tokens_to_ids(sent))
+  
+# convert train tokens to ids
+ID_WIKI_val = []
+for sent in TOKEN_WIKI_val:
+  ID_WIKI_val.append(text_encoder.convert_tokens_to_ids(sent))
