@@ -1,0 +1,150 @@
+!wget -O utils.py https://raw.githubusercontent.com/ashrefm/multi-label-soft-f1/master/utils.py
+!wget -O movie.csv https://raw.githubusercontent.com/ashrefm/multi-label-soft-f1/master/data/movie_poster/MovieGenre.csv
+
+from utils import *
+from PIL import Image
+import matplotlib.pyplot as plt
+import os
+import pandas as pd 
+import tensorflow as tf
+import tensorflow_hub as hub 
+from keras.preprocessing import image 
+from tensorflow.keras.layers import Dense, Dropout
+
+movies = pd.read_csv("./movie.csv", encoding="ISO-8859-1")
+movies.dropna(subset=['imdbId', 'Genre', 'Poster'], inplace=True)  # If inplace=True, do operation inplace and return None
+movies = movies[:10000]
+## movies.head(3) # check movie data
+
+download_dir = './data/movie_poster/images' 
+movies = download_parallel(movies, download_dir)  # Downloads images from Internet in parallel (utils.py)
+
+# use genres in which at least 1000 movies are included
+label_freq = movies['Genre'].apply(lambda s: str(s).split('|')).explode().value_counts().sort_values(ascending=False)
+least_used_label = list(label_freq[label_freq<1000].index)
+movies['Genre'] = movies['Genre'].apply(lambda s: [l for l in str(s).split('|') if l not in least_used_label]) 
+
+# explode : see examples here -> https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.explode.html
+## label_freq.head(3) # check label_freq data 
+# Drama      5011
+# Comedy     3411
+# Romance    1859
+# Name: Genre, dtype: int64
+## for i in range(3): # check least_used_label data
+##  print(least_used_label[i])
+# Horror
+# Mystery
+# Fantasy
+## movies.head(3) # check movie data
+
+x_train, x_val = movies['imdbId'][:8000], movies['imdbId'][8000:]
+y_train, y_val = movies['Genre'][:8000], movies['Genre'][8000:]
+x_train = [os.path.join('./data/movie_poster/images', str(f)+'.jpg') for f in x_train]
+x_val = [os.path.join('./data/movie_poster/images', str(f)+'.jpg') for f in x_val] 
+y_train = list(y_train)
+y_val = list(y_val) 
+
+# see image
+style.use("default")
+plt.figure(figsize=(12,4))
+for i in range(4):
+    ax = plt.subplot(1, 4, i+1)
+    plt.imshow(Image.open(x_train[i]))
+    plt.title(y_train[i], size=10)
+    plt.axis('off')
+    
+from sklearn.preprocessing import MultiLabelBinarizer
+
+mlb = MultiLabelBinarizer()
+mlb.fit(y_train)
+
+N_LABELS = len(mlb.classes_)
+print("장르 :")
+for (i, label) in enumerate(mlb.classes_):
+    print("{}. {}".format(i, label))
+print()
+
+y_train_bin = mlb.transform(y_train)
+y_val_bin = mlb.transform(y_val)
+print(">> label to label vector")
+for i in range(3):
+    print("LABEL : ", y_train[i],", LABEL VECTOR : ", y_train_bin[i])
+
+IMG_SIZE = 224  
+CHANNELS = 3 
+BATCH_SIZE = 256  
+LR = 0.0001 
+EPOCHS = 30
+
+def parse_function(filename, label): 
+    image_string = tf.io.read_file(filename) 
+    image_decoded = tf.image.decode_jpeg(image_string, channels=CHANNELS) # Decode a JPEG-encoded image to a uint8 tensor. The attr channels indicates the desired number of color channels for the decoded image.
+    image_resized = tf.image.resize(image_decoded, [IMG_SIZE, IMG_SIZE]) 
+    image_normalized = image_resized / 255.0
+    return image_normalized, label
+    
+def create_dataset(filenames, labels):
+    dataset = tf.data.Dataset.from_tensor_slices((filenames, labels)) 
+    dataset = dataset.map(parse_function) 
+    dataset = dataset.batch(BATCH_SIZE)  
+    return dataset
+
+train_ds = create_dataset(X_train, y_train_bin)
+val_ds = create_dataset(X_val, y_val_bin)
+
+feature_extractor_url = "https://tfhub.dev/google/tf2-preview/mobilenet_v2/feature_vector/2" 
+
+model = tf.keras.Sequential([
+    hub.KerasLayer(feature_extractor_url, input_shape=(IMG_SIZE,IMG_SIZE,CHANNELS)),
+    Dropout(0.3),
+    Dense(128, activation='relu'),
+    Dropout(0.3),
+    Dense(N_LABELS, activation='sigmoid')
+])
+
+model.summary()
+
+es = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=2)
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=LR), loss='mse')
+history = model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=[es])
+
+loss = history.history['loss']
+val_loss = history.history['val_loss'] 
+epochs = len(loss) 
+plt.figure(figsize=(8, 4))
+
+plt.plot(range(1, epochs+1), loss, label='Training Loss')
+plt.plot(range(1, epochs+1), val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+
+plt.show() 
+
+def inference(img_path, model): 
+    # Read and prepare image
+    img = image.load_img(img_path, target_size=(IMG_SIZE,IMG_SIZE,CHANNELS))
+    img = image.img_to_array(img)
+    img = img/255
+    img = np.expand_dims(img, axis=0) # expand_dims: see examples here -> https://numpy.org/doc/stable/reference/generated/numpy.expand_dims.html
+
+    # Generate prediction
+    prediction = (model.predict(img) > 0.5).astype('int')
+    print(prediction)
+    prediction = pd.Series(prediction[0])
+    print(prediction)
+    prediction.index = mlb.classes_
+    prediction = prediction[prediction==1].index.values 
+    if len(prediction)==0:
+      prediction = [mlb.classes_[tf.argmax(model.predict(img)[0])]]
+
+    # Dispaly image with prediction
+    style.use('default')
+    plt.figure(figsize=(8,4))
+    plt.imshow(Image.open(img_path))
+    plt.title('Prediction\n{}\n'.format(list(prediction)), fontsize=12)
+    plt.show()
+
+!wget -O test.jpg https://blog.kakaocdn.net/dn/pa2Z1/btqFHa2SWQ4/PrK15Q4kDNT7KmoWX6iJWK/img.jpg
+
+inference("./test.jpg", model)
