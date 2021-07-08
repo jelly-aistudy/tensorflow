@@ -4,6 +4,7 @@
 
 import json
 import random
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from konlpy.tag import Komoran
@@ -55,7 +56,7 @@ vocabulary_list.extend(vocab_list)
 
 # convert token to id / convert id to token
 class TextEncoder(object):
-    def __init__(self, vocab_list):
+    def __init__(self, vocabulary_list):
       self.pad_token = "[PAD]" # for padding
       self.oov_token = "[UNK]" # for unknown token
 
@@ -102,3 +103,36 @@ for sent in TOKEN_WIKI_train:
 ID_WIKI_val = []
 for sent in TOKEN_WIKI_val:
   ID_WIKI_val.append(text_encoder.convert_tokens_to_ids(sent))
+
+
+
+## emotion analysis data from github
+!wget https://raw.githubusercontent.com/e9t/nsmc/master/ratings_train.txt
+!wget https://raw.githubusercontent.com/e9t/nsmc/master/ratings_test.txt
+
+with open("ratings_train.txt") as f:
+  raw_train = f.readlines()
+with open("ratings_test.txt") as f:
+  raw_test = f.readlines()
+raw_train = [t.split('\t') for t in raw_train[1:]]
+raw_test = [t.split('\t') for t in raw_test[1:]]
+
+FULL_TRAIN = []
+for line in raw_train:
+  if int(line[2].strip()) == 0:
+    FULL_TRAIN.append([line[0], line[1], "부정"])  # id, sentence, label
+  elif int(line[2].strip()) == 1:
+    FULL_TRAIN.append([line[0], line[1], "긍정"])
+FULL_TEST = []
+for line in raw_test:
+  if int(line[2].strip()) == 0:
+    FULL_TEST.append([line[0], line[1], "부정"])
+  elif int(line[2].strip()) == 1:
+    FULL_TEST.append([line[0], line[1], "긍정"])
+   
+random.seed(2021)
+random.shuffle(FULL_TRAIN)
+random.shuffle(FULL_TEST)
+train = FULL_TRAIN[:50000]
+val = FULL_TRAIN[50000:60000]
+test = FULL_TEST[:10000]
