@@ -1,0 +1,28 @@
+## input
+CBA # required courses (order matters)
+3 # n
+CBDAGE # course design
+FGCDAB
+CTSBDEA
+
+## question
+If the given course design meets requirements, print out "YES", else "NO" 
+
+import sys
+from collections import deque
+sys.stdin=open("input.txt","rt")
+
+req=input()
+num=int(input())
+
+for i in range(num):
+    course=input()
+    course=deque(course)
+    tmp=''
+    for x in course:
+        if any(x==y for y in req) and x not in tmp:
+            tmp+=x
+    if tmp==req:
+        print("#{0} YES".format(i+1))
+    else:
+        print("#{0} NO".format(i+1))
