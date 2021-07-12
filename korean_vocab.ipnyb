@@ -1,0 +1,57 @@
+import json
+import random
+import io
+from tqdm import tqdm
+from collections import Counter
+from konlpy.tag import Komoran # Korean morpheme analyzer
+from google.colab import drive # google drive moount
+drive.mount('/content/gdrive')
+
+!pip install konlpy
+!pip install jpype1==0.7.0
+!wget https://korquad.github.io/dataset/KorQuAD_v1.0_train.json
+
+# use Korean wiki encyclopedia for vocabulary
+with open("/content/KorQuAD_v1.0_train.json") as f:
+  korquad = json.loads(f.read())
+
+PARAGRAPH = []
+for data in korquad["data"]:
+  for paragraph in data["paragraphs"]:
+    PARAGRAPH.append(paragraph["context"])
+  
+# split train and validation data
+random.seed(2021)
+random.shuffle(PARAGRAPH)
+x_train = PARAGRAPH[:8000]
+x_valid = PARAGRAPH[8000:]
+
+with open("/content/gdrive/My Drive/NLP/CBOW_x_train.json" , 'w') as f:
+  f.write(json.dumps(x_train))
+with open("/content/gdrive/My Drive/NLP/CBOW_x_valid.json" , 'w') as f:
+  f.write(json.dumps(x_valid))
+  
+# tokenizer
+def tokenize(sentence):
+  return komoran.morphs(sentence)
+
+vocab_freq = Counter()
+x_train_token = []
+for i, sent in tqdm(enumerate(x_train)):
+  tokenized_sent = tokenize(sent)
+  x_train_token.append(tokenized_sent)
+  for word in tokenized_sent:
+    vocab_freq[word] += 1
+   
+N = 70000 # len(vocab_freq)=71102
+most_common = vocab_freq.most_common(len(vocab_freq))
+vocabulary_list_tmp = [s[0] for s in most_common[:N]]
+
+# vocabulary list with PAD, UNK tokens
+vocabulary_list = ["[PAD]", "[UNK]"]
+vocabulary_list.extend(vocabulary_list_tmp)
+
+out_vocab = io.open("/content/gdrive/My Drive/NLP/vocab_list.tsv" , 'w', encoding='utf-8')
+for i, word in enumerate(vocabulary_list):
+  out_vocab.write(word + "\n")
+out_vocab.close()
