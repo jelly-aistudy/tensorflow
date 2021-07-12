@@ -1,0 +1,204 @@
+## korean_vocab.ipnyb is followed by CBOW.ipnyb
+
+import io
+import json
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense, Embedding, Lambda
+from tqdm import tqdm
+from konlpy.tag import Komoran
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from google.colab import drive # mount google drive
+drive.mount('/content/gdrive')
+
+!pip install konlpy
+
+# load train / validation data (not tokenized)
+with open("/content/gdrive/My Drive/NLP/CBOW_x_train.json" , 'r') as f:
+  x_train = json.loads(f.read())
+with open("/content/gdrive/My Drive/NLP/CBOW_x_valid.json" , 'r') as f:
+  x_valid = json.loads(f.read())
+
+# load vocabulary
+with open("/content/gdrive/My Drive/NLP/vocab_list.tsv") as f:
+  vocabulary_list = [v.strip() for v in f.readlines()]
+  
+# tokenize
+komoran = Komoran()
+def tokenize(sentence):
+  return komoran.morphs(sentence)
+  
+# tokenize train / validation data
+x_train_token = []
+x_valid_token = []
+
+for sent in tqdm(x_train):
+  tokenized_sent = tokenize(sent)
+  x_train_token.append(tokenized_sent)
+
+for sent in tqdm(x_valid):
+  tokenized_sent = tokenize(sent)
+  x_valid_token.append(tokenized_sent)
+
+
+## change token to index ##
+class TextEncoder(object):
+    def __init__(self, vocab_list): 
+      self.pad_token = "[PAD]" 
+      self.oov_token = "[UNK]"
+      
+      # token to id
+      token_to_id = {}
+      for i, token in enumerate(vocab_list):
+        token_to_id[token] = i
+        
+      # id to token
+      id_to_token = {v:k for k,v in token_to_id.items()} 
+ 
+      self.token_to_id = token_to_id
+      self.id_to_token = id_to_token
+      self.vocab_size = len(token_to_id)  
+      self.vocab_list = vocab_list
+     
+    def convert_tokens_to_ids(self, tokens):
+      ids = []
+      for token in tokens:
+        if token in self.token_to_id:
+          ids.append(self.token_to_id[token]) 
+        else:
+          ids.append(self.token_to_id[self.oov_token]) 
+      return ids
+ 
+    def convert_ids_to_tokens(self, ids):
+      return [self.id_to_token[i] for i in ids]
+      
+text_encoder = TextEncoder(vocabulary_list)
+
+# convert tokens to ids
+x_train_id = []
+x_valid_id = []
+
+for sent in x_train_token:
+  x_train_id.append(text_encoder.convert_tokens_to_ids(sent))
+for sent in x_valid_token:
+  x_valid_id.append(text_encoder.convert_tokens_to_ids(sent))
+  
+## create CBOW data ##
+def generate_cbow_data(corpus, window_size = 3):
+  inputs = []
+  labels = []
+
+  context_length = window_size*2
+  for sent in corpus:
+    sentence_length = len(sent)
+    for index, word in enumerate(sent):
+      if index < window_size or index >= len(sent)-window_size:
+        continue
+
+      context_words = []            
+      start = index - window_size
+      end = index + window_size + 1
+      
+      context_words= [sent[i] for i in range(start, end) 
+                               if 0 <= i < sentence_length and i != index]                      
+
+      assert(len(context_words) == context_length)
+      inputs.append(context_words)
+      labels.append(word)
+
+  return inputs, labels
+  
+WINDOW_SIZE = 3
+input_train, label_train = generate_context_word_pairs(x_train_id, window_size=WINDOW_SIZE)
+input_valid, label_valid = generate_context_word_pairs(x_valid_id, window_size=WINDOW_SIZE)
+
+# change list to numpy array for tensorflow
+input_train = np.array(input_train)
+label_train = np.array(label_train)
+input_valid = np.array(input_valid)
+label_valid = np.array(label_valid)
+
+# modelling
+VOCAB_SIZE = text_encoder.vocab_size 
+EMBED_SIZE = 128 
+INPUT_LENGTH = WINDOW_SIZE * 2 
+ 
+cbow_model = Sequential()
+cbow_model.add(Embedding(VOCAB_SIZE, EMBED_SIZE, input_length = INPUT_LENGTH)) 
+cbow_model.add(Lambda(lambda x: tf.keras.backend.mean(x, axis=1), output_shape=(EMBED_SIZE,)))
+cbow_model.add(Dense(VOCAB_SIZE, activation = "softmax")) 
+
+cbow_model.compile(loss='sparse_categorical_crossentropy', optimizer='adam')
+
+# custom callback
+# to check words with similar meanings are mapped in similar meaning space while training
+class MyCustomCallback(tf.keras.callbacks.Callback):
+  
+  def on_epoch_end(self, batch, logs=None):
+    valid_dataset = ["사과", "취업", "밥", "사랑", "수학", "운동", "가수", "회사", "자신감"]
+    valid_dataset = text_encoder.convert_tokens_to_ids(valid_dataset)
+
+    embedding = cbow_model.get_weights()[0] # model weights
+
+    reverse_dictionary = text_encoder.id_to_token
+    norm = tf.keras.backend.sqrt(tf.reduce_sum(tf.keras.backend.square(embedding), 1, keepdims=True))
+    # tf.math.square: Computes square of x element-wise.
+    # tf.math.reduce_sum: Computes the sum of elements across dimensions of a tensor.
+    # tf.math.sqrt: Computes element-wise square root of the input tensor.
+    normalized_embeddings = embedding / norm
+    valid_embeddings = tf.nn.embedding_lookup(normalized_embeddings, valid_dataset)
+    # tf.nn.embedding_lookup: Looks up embeddings for the given ids from a list of tensors.
+    similarity = tf.matmul(valid_embeddings, normalized_embeddings, transpose_b=True)
+    # tf.linalg.matmul: Multiplies matrix a by matrix b, producing a * b.
+    print("")
+    for val_i in range(len(valid_dataset)):
+      valid_word = reverse_dictionary[valid_dataset[val_i]]
+      top_k = 8 # number of nearest neighbors
+      nearest = np.array(-similarity[val_i, :]).argsort()[1:top_k+1] 
+      print("{} -> {}".format(valid_word, " , ".join(text_encoder.convert_ids_to_tokens(nearest))))
+            
+history = cbow_model.fit(input_train, label_train, epochs = 3, batch_size=256,
+               validation_data = (input_valid, label_valid),
+               callbacks = [MyCustomCallback()])
+
+# save embeddings
+final_embeddings = cbow_model.get_weights()[0]
+final_embeddings = np.array(final_embeddings)
+
+out_v = io.open("/content/gdrive/My Drive/NLP/embeddings.tsv" , 'w', encoding='utf-8')
+for num, word in enumerate(text_encoder.vocab_list):
+  vec = final_embeddings[num]
+  out_v.write('\t'.join([str(x) for x in vec]) + "\n")
+out_v.close()
+
+# load vocabulary list and word vector
+with open("/content/gdrive/My Drive/NLP/embeddings.tsv") as f:
+  vecs = [v.strip() for v in f.readlines()]
+final_embeddings = [v.split("\t") for v in vecs]
+final_embeddings = np.array(final_embeddings, dtype="float32")
+with open("/content/gdrive/My Drive/NLP/vocab_list.tsv") as f:
+  meta = [v.strip() for v in f.readlines()]
+
+
+reverse_dictionary = {}
+token_to_id_dictionary = {}
+for i, token in enumerate(meta):
+  reverse_dictionary[i] = token
+  token_to_id_dictionary[token] = i
+
+# find nearest token
+def search_nearest(search_token, top_k = 5):
+  if search_token not in token_to_id_dictionary:
+    print("not found in the dictionary")
+  search_id = token_to_id_dictionary[search_token]
+  print("{} -> {}".format(search_token, search_id))
+
+  norm = tf.keras.backend.sqrt(tf.reduce_sum(tf.keras.backend.square(final_embeddings), 1, keepdims=True))
+  normalized_embeddings = final_embeddings / norm
+  valid_embeddings = tf.nn.embedding_lookup(normalized_embeddings, [search_id])
+  similarity = tf.matmul(valid_embeddings, normalized_embeddings, transpose_b=True)
+  print("")
+
+  nearest = np.array(-similarity[0, :]).argsort()[1:top_k+1] 
+  print("Nearest Tokens: {}".format(" , ".join([reverse_dictionary[s] for s in nearest])))
