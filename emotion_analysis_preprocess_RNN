@@ -1,0 +1,180 @@
+## This file should be done after CBOW.ipnyb
+
+import random
+import json
+import numpy as np
+import tensorflow as tf
+import collections 
+import pickle
+from tqdm import tqdm
+from konlpy.tag import Komoran
+from utils import TextEncoder # refer to CBOW.ipnyb
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+# Korean morpheme analyzer
+!pip install konlpy
+# emotion analysis dataset
+!wget https://raw.githubusercontent.com/e9t/nsmc/master/ratings_train.txt 
+!wget https://raw.githubusercontent.com/e9t/nsmc/master/ratings_test.txt
+
+with open("ratings_train.txt") as f:
+  raw_train = f.readlines()
+with open("ratings_test.txt") as f:
+  raw_test = f.readlines()
+raw_train = [t.split('\t') for t in raw_train[1:]]
+raw_test = [t.split('\t') for t in raw_test[1:]]
+
+x_train = []
+for x in raw_train:
+  if int(x[2].strip()) == 0:
+    x_train.append([x[0], x[1], "부정"])
+  elif int(x[2].strip()) == 1:
+    x_train.append([x[0], x[1], "긍정"])
+x_test = []
+for x in raw_test:
+  if int(x[2].strip()) == 0:
+    x_test.append([x[0], x[1], "부정"])
+  elif int(x[2].strip()) == 1:
+    x_test.append([x[0], x[1], "긍정"])
+
+# data example
+# ['7797314', '원작의 긴장감을 제대로 살려내지못했다.', '부정']
+
+random.seed(2021)
+random.shuffle(x_train)
+random.shuffle(x_test)
+train = x_train[:50000]
+val = x_train[50000:60000]
+test = x_test[:10000]
+
+with open("/content/gdrive/My Drive/NLP/Sentiment_train.json", "w") as f:
+  f.write(json.dumps(train))
+with open("/content/gdrive/My Drive/NLP/Sentiment_val.json", "w") as f:
+  f.write(json.dumps(val))
+with open("/content/gdrive/My Drive/NLP/Sentiment_test.json", "w") as f:
+  f.write(json.dumps(test))
+  
+## tokenize
+komoran = Komoran()
+def tokenize(sentence):
+  return komoran.morphs(sentence)
+
+# load word embedding and vocab list
+with open("/content/gdrive/My Drive/NLP/embeddings.tsv") as f:
+  vecs = [v.strip() for v in f.readlines()]
+final_embeddings = [v.split("\t") for v in vecs]
+final_embeddings = np.array(final_embeddings, dtype="float32")
+
+with open("/content/gdrive/My Drive/NLP/vocab_list.tsv") as f:
+  vocab_list = [v.strip() for v in f.readlines()]
+
+## update vocab list
+tot_tokens = 0
+oov_counter = collections.Counter() 
+
+tokenized_train = [] 
+for data in tqdm(train):
+  sent = data[1]
+  tokenized_sent = tokenize(sent)
+  tot_tokens += len(tokenized_sent) 
+  for word in tokenized_sent:
+    if word not in vocab_list: 
+      oov_counter[word] += 1     
+  tokenized_train.append([data[0],tokenized_sent, data[2]])
+  
+most_common = oov_counter.most_common(len(oov_counter))
+new_vocab_list = vocab_list.copy() 
+new_vocab_list.extend([v[0] for v in most_common]) 
+
+with open("/content/gdrive/My Drive/NLP/Sentiment_vocab.json", "w") as f:
+  f.write(json.dumps(new_vocab_list))
+  
+tokenized_val = [] 
+for data in tqdm(val):
+  tokenized_sent = tokenize(data[1])   
+  tokenized_val.append([data[0],tokenized_sent, data[2]]) 
+
+tokenized_test = [] 
+for data in tqdm(test):
+  tokenized_sent = tokenize(data[1])   
+  tokenized_test.append([data[0],tokenized_sent, data[2]]) 
+  
+# load TextEncoder (token to id, id to token)
+text_encoder = TextEncoder(new_vocab_list)
+
+## preprocess data for sentiment analysis
+# 1. convert token to id
+# 2. convert label to id (label mapping dictionary required)
+# 3. padding & numpy array for batch
+
+def preprocess(examples, text_encoder, max_seq_len, label_map=None):
+
+  input_ids = [] 
+  labels = [] 
+
+  if label_map is None: 
+    CREATE_LABEL_MAP = True
+    label_map = {}
+    label_index = 0
+  else: 
+    CREATE_LABEL_MAP = False
+
+  for example in examples:
+    idx, tokenized_sent, label = example
+
+    ## 1. convert token to id 
+    input_id = text_encoder.convert_tokens_to_ids(tokenized_sent)
+    if len(input_id) == 0:
+      continue
+
+    ## 2. convert label to id 
+    if label in label_map:
+      label_id = label_map[label]
+    else:
+      if CREATE_LABEL_MAP:
+        label_map[label] = label_index
+        label_index += 1
+        label_id = label_map[label]
+      else:
+        print("** ERROR: UNSEEN LABEL DETECTED -", label)
+        continue
+  
+    input_ids.append(input_id)
+    labels.append(label_id)
+    
+  input_ids = pad_sequences(input_ids, 
+                            maxlen=max_seq_len, 
+                            padding="post", 
+                            truncating="pre")
+
+  input_ids = np.array(input_ids)
+  labels = np.array(labels)
+  assert len(input_ids) == len(labels)
+  
+  return input_ids, labels, label_map
+  
+# TRAIN
+train_ids, train_labels, label_map = preprocess(tokenized_train, text_encoder, max_seq_len=50, label_map = None)
+# VAL
+val_ids, val_labels, _ = preprocess(tokenized_val, text_encoder, max_seq_len=50, label_map = label_map)
+# TEST
+test_ids, test_labels, _ = preprocess(tokenized_test, text_encoder, max_seq_len=50, label_map = label_map)
+
+# save preprocessed data
+preprocess_data = {
+    "train_ids": train_ids,
+    "train_labels": train_labels,
+    "val_ids": val_ids,
+    "val_labels": val_labels,
+    "test_ids": test_ids,
+    "test_labels": test_labels,
+    "label_map":label_map
+}
+
+with open("/content/gdrive/My Drive/NLP/Sentiment_preprocess_data.pkl", "wb") as f:
+  pickle.dump(preprocess_data, f)
+
+!cp utils.py "/content/gdrive/My Drive/NLP/"
