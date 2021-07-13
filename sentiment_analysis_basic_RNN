@@ -1,0 +1,96 @@
+## Please refer to sentiment_analysis_preprocess_RNN file first
+
+import pickle
+import numpy as np
+import tensorflow as tf
+import json
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Embedding, SimpleRNN, Dense
+from utils import TextEncoder
+from konlpy.tag import Komoran
+
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+!pip install konlpy
+!cp "/content/gdrive/My Drive/NLP/utils.py" "/content"
+
+# load preprocessed data
+with open("/content/gdrive/My Drive/NLP/Sentiment_preprocess_data.pkl", "rb") as f:
+  preprocess_data = pickle.load(f)
+train_ids = preprocess_data["train_ids"]
+train_labels = preprocess_data["train_labels"]
+val_ids = preprocess_data["val_ids"]
+val_labels = preprocess_data["val_labels"]
+test_ids = preprocess_data["test_ids"]
+test_labels = preprocess_data["test_labels"]
+label_map = preprocess_data["label_map"]
+
+# tokenizer
+komoran = Komoran() 
+def tokenize(sentence):
+  return komoran.morphs(sentence)
+
+# load vocab list
+with open("/content/gdrive/My Drive/NLP/Sentiment_vocab.json", "r") as f:
+  new_vocab_list = json.loads(f.read())
+
+text_encoder = TextEncoder(new_vocab_list)
+
+# load embeddings
+with open("/content/gdrive/My Drive/NLP/embeddings.tsv") as f:
+  vecs = [v.strip() for v in f.readlines()]
+  final_embeddings = [v.split("\t") for v in vecs]
+  final_embeddings = np.array(final_embeddings, dtype="float32")
+  
+tf.keras.backend.clear_session()
+
+## 1. modeling
+vocab_size = text_encoder.vocab_size 
+embedding_dim = final_embeddings.shape[1] 
+rnn_hidden_dim = 50 
+final_dim = len(label_map)
+
+model = Sequential()
+model.add(Embedding(input_dim = vocab_size, output_dim = embedding_dim, mask_zero = True))  # paddign -> masking
+model.add(SimpleRNN(rnn_hidden_dim))
+model.add(Dense(rnn_hidden_dim, activation='relu')) 
+model.add(Dense(final_dim, activation= 'softmax'))
+
+## 2. initialize model embedding using cbow embedding
+org_vocab_size = final_embeddings.shape[0] # 70002
+new_vocab_size = len(new_vocab_list) # 85929
+
+# make randomly initialized vector (except CBOW embedding)
+rand_initial = np.random.uniform(-1,1,size=[vocab_size-org_vocab_size,embedding_dim])
+# rand_initial.shape: (15927,128)
+
+initial_weight = np.append(final_embeddings, rand_initial, axis = 0)
+# initial_weight.shape: (85929,128)
+
+model.weights[0].assign(initial_weight)
+
+## 3. model compile
+model.compile(loss = "sparse_categorical_crossentropy", 
+              optimizer = "adam", metrics = "accuracy")
+              
+## 4. model train
+callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss',  patience=1)
+num_epochs = 5
+history = model.fit(train_ids, train_labels, epochs=num_epochs, batch_size=200,
+                    validation_data=(val_ids, val_labels), callbacks=[callback])
+                    
+model.evaluate(test_ids, test_labels)
+
+## 5. infer
+def inference(mymodel, sentence):
+  # 1. tokenizer
+  parsed_sent = tokenize(sentence)
+
+  # 2. conver token to id
+  input_id_tmp = text_encoder.convert_tokens_to_ids(parsed_sent)
+  input_id = np.array([input_id_tmp])
+  score = mymodel.predict(input_id)
+
+  print("** INPUT:", sentence)
+  print("   -> 긍정: {:.2f} / 부정: {:.2f}".format(score[0][0],score[0][1]))
