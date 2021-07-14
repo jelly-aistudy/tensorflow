@@ -1,0 +1,57 @@
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import matplotlib.ticker as ticker
+
+import tensorflow as tf
+from tensorflow.keras import Model
+from tensorflow.keras import layers
+from sklearn.model_selection import train_test_split
+from konlpy.tag import Komoran
+from attention_codes import * # preprocess
+import numpy as np
+import konlpy
+import unicodedata
+import re
+import os
+import io
+import time
+import pandas as pd
+
+%config InlineBackend.figure_format = 'retina'
+
+!pip install konlpy
+!pip install jpype1==0.7.0
+!apt -qq -y install fonts-nanum
+ 
+fontpath = '/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf'
+font = fm.FontProperties(fname=fontpath, size=9)
+plt.rc('font', family='NanumBarunGothic') 
+mpl.font_manager._rebuild()
+
+plt.figure(figsize=(5,5))
+plt.plot([0,1],[0,1],label="한글 테스트용")
+plt.legend()
+plt.show()
+
+# dataset from AI HUB
+path_to_file = "/content/2_대화체_200226.xlsx"
+data = pd.read_excel(path_to_file)
+
+# tokenizer
+komoran = Komoran()
+def kor_tokenizer(sentence):
+  return " ".join(komoran.morphs(sentence))
+
+# Korean - morpheme, English - space
+# add <start> <end> tokens to the sentence
+SOURCE, TARGET = create_dataset(path_to_file, kor_tokenizer)
+
+# tokenizing
+input_tensor, target_tensor, inp_lang, targ_lang = load_dataset(SOURCE, TARGET)
+max_length_targ, max_length_inp = target_tensor.shape[1], input_tensor.shape[1]
+
+# split dataset
+input_tensor_train, input_tensor_val, target_tensor_train, target_tensor_val = train_test_split(input_tensor, target_tensor, test_size=0.1, random_state=2021)
+
+# model
