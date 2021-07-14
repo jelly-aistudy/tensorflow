@@ -96,10 +96,13 @@ Char_CNN.evaluate(test_ids, test_labels)
 def inference(mymodel, sentence, cnn_filters):
   parsed_sent = tokenize(sentence)
   input_id = text_encoder.convert_tokens_to_ids(parsed_sent)
+  MIN_SEQ_LEN = max(cnn_filters)
+  while len(input_id) < MIN_SEQ_LEN:
+    input_id.append(0)
   input_id = [input_id]
   score = mymodel.predict(input_id) 
 
   print("** INPUT:", sentence)
   print("   -> 긍정: {:.2f} / 부정: {:.2f}".format(score[0][0],score[0][1]))
   
-inference(Char_CNN, "오프닝은 진짜 거지같다 생각했는데 끝으로 갈수록 손에 땀을 쥐며 봤네요", cnn_filters)
+# inference(Char_CNN, "오프닝은 진짜 거지같다 생각했는데 끝으로 갈수록 손에 땀을 쥐며 봤네요", cnn_filters)
