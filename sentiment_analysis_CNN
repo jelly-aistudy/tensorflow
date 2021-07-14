@@ -1,0 +1,105 @@
+import json
+import numpy as np
+import tensorflow as tf
+import collections
+from tqdm import tqdm
+from tensorflow.keras import layers
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Input, Embedding, Conv1D, GlobalMaxPooling1D, Dense
+
+# class/function we made before are in utils
+from utils import TextEncoder
+from utils import preprocess
+
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+!cp "/content/gdrive/My Drive/NLP/utils.py" "/content"
+
+## load data
+with open("/content/gdrive/My Drive/NLP/Sentiment_train.json") as f:
+  train = json.loads(f.read())
+with open("/content/gdrive/My Drive/NLP/Sentiment_val.json") as f:
+  val = json.loads(f.read())
+with open("/content/gdrive/My Drive/NLP/Sentiment_test.json") as f:
+  test = json.loads(f.read())
+  
+# tokenizer - character based
+def tokenize(sent):
+  white_space_removed = ' '.join(sent.split()) 
+  return [s for s in white_space_removed]
+  
+# vocab list
+tot_tokens = 0
+char_counter = collections.Counter()
+ 
+for data in tqdm(train):
+  sent = data[1]
+  tokenized_sent = tokenize(sent)
+  for char in tokenized_sent:
+      char_counter[char] += 1
+      
+chars = char_counter.most_common(len(char_counter))
+
+vocab_list = ["[PAD]", "[UNK]"]
+vocab_list.extend([c[0] for c in chars])
+
+tokenized_train, tokenized_val, tokenized_test = [], [], []
+
+for data in train:
+  tokenized_train.append([data[0], tokenize(data[1]), data[2]])
+for data in val:
+  tokenized_val.append([data[0], tokenize(data[1]), data[2]])
+for data in test:
+  tokenized_test.append([data[0], tokenize(data[1]), data[2]])
+  
+# token to id
+text_encoder = TextEncoder(vocab_list)
+
+MAX_LEN = 150
+train_ids, train_labels, label_map = preprocess(tokenized_train, text_encoder, max_seq_len=MAX_LEN, label_map = None)
+val_ids, val_labels, _ = preprocess(tokenized_val, text_encoder, max_seq_len=MAX_LEN, label_map = label_map)
+test_ids, test_labels, _ = preprocess(tokenized_test, text_encoder, max_seq_len=MAX_LEN, label_map = label_map)
+
+# model
+tf.keras.backend.clear_session()
+ 
+vocab_size = text_encoder.vocab_size 
+embedding_dim = 32 
+cnn_filters = [3,4,5,6]
+num_feature_map = 64
+
+input_ = tf.keras.layers.Input(shape=(None,))
+x =  Embedding(vocab_size, embedding_dim, mask_zero = True)(input_)
+result_cnns = []
+for i, kernel in enumerate(cnn_filters):
+  temp = Conv1D(filters = num_feature_map, kernel_size = kernel, activation='relu')(x)
+  temp = GlobalMaxPooling1D()(temp)
+  result_cnns.append(temp)
+x = tf.keras.layers.concatenate(result_cnns, axis=-1)
+labels = Dense(2, activation="softmax")(x)
+
+Char_CNN = tf.keras.Model(inputs=input_, outputs = labels)
+tf.keras.utils.plot_model( model , to_file='model.png', show_shapes=True)
+
+# compile and fit
+Char_CNN.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+callback = tf.keras.callbacks.EarlyStopping( monitor='val_loss', patience=1)
+num_epochs = 5
+history = Char_CNN.fit(train_ids, train_labels,
+                       epochs=num_epochs, batch_size=100,
+                    validation_data=(val_ids, val_labels), callbacks=[callback])
+                    
+# evaluate and infer
+Char_CNN.evaluate(test_ids, test_labels)
+
+def inference(mymodel, sentence, cnn_filters):
+  parsed_sent = tokenize(sentence)
+  input_id = text_encoder.convert_tokens_to_ids(parsed_sent)
+  input_id = [input_id]
+  score = mymodel.predict(input_id) 
+
+  print("** INPUT:", sentence)
+  print("   -> 긍정: {:.2f} / 부정: {:.2f}".format(score[0][0],score[0][1]))
+  
+inference(Char_CNN, "오프닝은 진짜 거지같다 생각했는데 끝으로 갈수록 손에 땀을 쥐며 봤네요", cnn_filters)
