@@ -1,0 +1,180 @@
+import numpy as np
+import tensorflow as tf
+import json
+import random
+import collections
+from konlpy.tag import Komoran, Hannanum, Kkma, Okt
+from utils import TextEncoder, preprocess
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, GRU, Dropout, Dense, Conv1D, GlobalMaxPooling1D
+from tensorflow.keras import Sequential
+
+
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+!cp "/content/gdrive/My Drive/NLP/utils.py" "/content"
+!pip install konlpy
+
+# load dataset
+filename = "/content/gdrive/My Drive/NLP/Wellness_data_train.json"
+with open(filename) as f:
+  train = json.loads(f.read())
+  
+train_counter = collections.Counter()
+for data in train:
+  train_counter[data[2]] += 1
+  
+## 1. tokenizing
+komoran = Komoran()
+def tokenize(sentence):
+  return komoran.morphs(sentence)
+
+## 2. encoding
+# load embedding and vocab list
+with open("/content/gdrive/My Drive/NLP/embeddings.tsv") as f:
+  vecs = [v.strip() for v in f.readlines()]
+final_embeddings = [v.split("\t") for v in vecs]
+final_embeddings = np.array(final_embeddings, dtype="float32")
+with open("/content/gdrive/My Drive/NLP/vocab_list.tsv") as f:
+  vocab_list = [v.strip() for v in f.readlines()]
+
+tot_tokens = 0
+oov_counter = collections.Counter()
+Tokenized_train = []
+for data in train:
+  sent = data[1]
+  tokenized_sent = tokenize(sent)
+  tot_tokens += len(tokenized_sent)
+  for word in tokenized_sent:
+    if word not in vocab_list:
+      oov_counter[word] += 1
+  Tokenized_train.append([dat[0], tokenized_sent, dat[2]])
+
+# add tokens to vocab list
+most_common = oov_counter.most_common(len(oov_counter))
+new_vocab_list = vocab_list.copy()
+new_vocab_list.extend([v[0] for v in most_common])
+
+# model input
+text_encoder = TextEncoder(new_vocab_list)
+MAX_LEN = 50
+train_ids, train_labels, label_map = preprocess(Tokenized_train, text_encoder, max_seq_len=MAX_LEN)
+
+## 3. modeling
+# split data
+train_ids, val_ids, train_labels, val_labels = train_test_split(train_ids, train_labels , test_size=0.10, random_state=42, stratify=train_labels)
+
+# 1) Multi Layer LSTM
+vocab_size = text_encoder.vocab_size 
+embedding_dim = final_embeddings.shape[1] 
+rnn_hidden_dim = 100 # RNN hidden_size
+dense_hidden_dim = 200
+final_dim = len(label_map) #176
+
+model1 = tf.keras.Sequential([
+    Embedding(vocab_size, embedding_dim, mask_zero=True),
+    Bidirectional(GRU(rnn_hidden_dim, return_sequences=False)),
+    Dropout(0.5),
+    Dense(dense_hidden_dim, activation="relu"),
+    Dropout(0.5),
+    Dense(final_dim, activation='softmax')
+])
+
+## CBOW weight assign
+org_vocab_size = final_embeddings.shape[0]
+rand_initial = np.random.uniform(-1,1,size=[vocab_size-org_vocab_size,embedding_dim])
+initial_weight = np.append(final_embeddings, rand_initial, axis = 0)
+model1.weights[0].assign(initial_weight)
+
+# 2) CNN
+cnn_filters = [2,3,4,5]
+num_feature_map = 32
+
+input_ = tf.keras.layers.Input(shape=(None,))
+x =  Embedding(vocab_size, embedding_dim, mask_zero = True)(input_)
+result_cnns = []
+for i, kernel in enumerate(cnn_filters): # apply CNN filters
+  temp = Conv1D(filters = num_feature_map, 
+                    kernel_size = kernel, activation='relu')(x)
+  temp = GlobalMaxPooling1D()(temp)
+  result_cnns.append(temp)
+x = tf.keras.layers.concatenate(result_cnns, axis=-1) # concatenate to feature map
+x = Dropout(0.5)(x) 
+labels = Dense(final_dim, activation="softmax")(x) # positive / negative FCN
+
+model2 = tf.keras.Model(inputs=input_, outputs = labels)
+model2.weights[0].assign(initial_weight)
+model2.get_weights()[0]
+
+# compile
+model1.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+model2.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+# fit
+num_epochs = 50
+callback = tf.keras.callbacks.EarlyStopping( monitor='val_loss', patience=2)
+history1 = model1.fit(train_ids, train_labels, epochs=num_epochs, 
+                    validation_data=(val_ids, val_labels), verbose=1, batch_size = 100,
+                    callbacks = [callback])
+num_epochs = 50
+callback2 = tf.keras.callbacks.EarlyStopping( monitor='val_loss', patience=2)
+history2 = model2.fit(train_ids, train_labels, epochs=num_epochs, 
+                    validation_data=(val_ids, val_labels), verbose=1, batch_size = 100, callbacks = [callback])
+                    
+# test data
+filename = "/content/gdrive/My Drive/NLP/Wellness_data_test.json"
+with open(filename) as f:
+  test = json.loads(f.read())
+  
+MAX_LEN = 50
+Tokenized_text = []
+for data in test:
+  Tokenized_text.append([data[0], tokenize(data[1]), data[2]])
+
+test_ids, test_labels, _ = preprocess(Tokenized_text, text_encoder, max_seq_len=MAX_LEN, label_map = label_map)
+
+def make_prediction(test_ids):
+  model_result1 = model1.predict(test_ids)
+  model_result2 = model2.predict(test_ids)
+
+  # ensenble
+  scores = (model_result1 + model_result2) / 2 
+  predictions = np.argmax(scores, axis=1)
+  return scores , predictions
+  
+def SCORE(predictions, ground_truth):
+  print("TEST SET ACCURACY: {:.2f}".format(sum(predictions == ground_truth) / len(predictions)))
+  print("-"*80)
+  label_reverse = {v:k for k, v in label_map.items()}
+  for i in range(len(predictions)):
+    if predictions[i] != ground_truth[i]:
+      print("🥺: {}".format(test[i][1]))
+      print("-> 👩‍⚕️: {} 🤖: {}".format( label_reverse[ground_truth[i]], label_reverse[predictions[i]]), "\n")
+      
+scores, predictions = make_prediction(test_ids)
+SCORE(predictions, test_labels)
+
+# inference
+filename = "/content/gdrive/My Drive/NLP/Wellness_response.json"
+with open(filename) as f:
+  RESPONSE = json.loads(f.read())
+  
+def ROBOT_DOCTOR(sentence, label_map=label_map):
+  reverse_label = {v:k for k, v in label_map.items()}
+  # 1. tokenizer
+  parsed_sent = tokenize(sentence)
+  input_id_temp = []
+
+  # 2. token to index
+  input_id_temp = text_encoder.convert_tokens_to_ids(parsed_sent)
+  
+  # no need to pad
+  input_id = np.array([input_id_temp])
+  score, prediction = make_prediction(input_id)
+  prediction = np.argmax(score[0])
+  pred_label = reverse_label[prediction]
+
+  print("🥺:", sentence)
+  print(" -> inferred intention: {} ({:.2f}%)\n".format(pred_label , 100*score[0][prediction]))
+  print("💚{}".format(random.choice(RESPONSE[pred_label])))  
