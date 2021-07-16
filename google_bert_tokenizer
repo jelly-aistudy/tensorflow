@@ -1,0 +1,58 @@
+!pip install bert-for-tf2
+!pip install konlpy
+!pip install jpype1==0.7.0
+
+import bert
+import tensorflow_hub as hub
+from bert.tokenization import bert_tokenization
+from konlpy.tag import Okt
+
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+
+# tokenizer
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
+okt=Okt()
+def tokenize(lines):
+  return okt.morphs(lines) # must not recover original value, so use okt not komoran
+
+# example
+sentence = "버트로 토킄나이즈"
+tokenized_sentence = tokenize(sentence) # split sentence using bert tokenizer, ['버트', '로', '토크', '나', '이즈']
+sub_tokens = tokenizer.tokenize(" ".join(tokenized_sentence)) # sub-token ['버', '##트', '로', '토', '##크', '나', '이', '##즈']
+
+# token to model input index
+input_ids = tokenizer.convert_tokens_to_ids(sub_tokens) # [9336, 15184, 9202, 9873, 20308, 8982, 9638, 24891]
+
+!gsutil cp gs://tfhub-modules/tensorflow/bert_multi_cased_L-12_H-768_A-12/2/uncompressed/assets/vocab.txt /content/vocab.txt 
+vocab_file = "/content/vocab.txt"
+# there are 99 unused tokens in bert
+
+# If you want to add new words
+never_split = ["구글", "깃허브"]
+new_vocabs = org_vocabs.copy()
+idx = 1
+for tok in never_split:
+  if tok not in org_vocabs: 
+    if "unused" in new_vocabs[idx]: 
+      new_vocabs[idx] = tok
+      idx += 1
+    else:
+      "Cannot Allocate New Token Anymore"
+      break
+      
+new_vocab_file = "/content/new_vocab.txt"
+with open(new_vocab_file, "w") as f:
+  f.write("\n".join(new_vocabs))
+  
+new_tokenizer = bert_tokenization.FullTokenizer(new_vocab_file, do_lower_case)
+
+# use new tokenizer
+sentence = "주말이 안 끝나면 좋겠다"
+tokenized_sentence = tokenize(sentence) # okt tokenizer
+sub_tokenized_sent = new_tokenizer.tokenize(" ".join(tokenized_sentence)) # sub token. join is needed because string (not list) can be tokenized
+sub_tokenized_sent = ["[CLS]"]+sub_tokenized_sent+["[SEP]"]
+input_ids = new_tokenizer.convert_tokens_to_ids(sub_tokenized_sent)
