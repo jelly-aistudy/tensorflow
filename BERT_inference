@@ -1,0 +1,119 @@
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+!pip install bert-for-tf2
+!pip install konlpy
+
+import json
+import random
+import pickle
+import numpy as np
+import tensorflow as tf
+
+import bert
+import tensorflow_hub as hub
+from tensorflow.keras import Model
+from konlpy.tag import Okt
+from  bert.tokenization import bert_tokenization
+
+#### load test dataset ####
+class InputFeatures(object):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id):
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+        self.label_id = label_id
+
+with open("/content/gdrive/My Drive/NLP/Wellness_data_test.json") as f:
+  test = json.loads(f.read())
+with open("/content/gdrive/My Drive/NLP/BERT_CLS_test_features.pkl", "rb") as f:
+  test_features = pickle.load(f)
+with open("/content/gdrive/My Drive/NLP/BERT_CLS_label_map.json", "r") as f:
+  label_map = json.loads(f.read())
+  
+
+#### model build and load weights ####
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+
+input_word_ids = tf.keras.layers.Input(shape=(None,), dtype=tf.int32, name="input_word_ids")
+input_mask = tf.keras.layers.Input(shape=(None,), dtype=tf.int32, name="input_mask")
+segment_ids = tf.keras.layers.Input(shape=(None,), dtype=tf.int32, name="segment_ids")
+
+dropout_layer = tf.keras.layers.Dropout(0.2)
+fc_layer = tf.keras.layers.Dense(176, activation = tf.nn.softmax)
+
+pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
+dropout_output = dropout_layer(pooled_output)
+logits = fc_layer(dropout_output)
+model = Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=logits)
+model.compile(optimizer=tf.keras.optimizers.Adam(2e-5),
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+
+model.load_weights("/content/gdrive/My Drive/NLP/BERT_CLS_checkpoint")
+
+test_input_ids = np.array([f.input_ids for f in test_features])
+test_input_masks = np.array([f.input_mask for f in test_features])
+test_seg_ids = np.array([f.segment_ids for f in test_features])
+test_label_ids = np.array([f.label_id for f in test_features])
+
+scores = model.predict([test_input_ids, test_input_masks, test_seg_ids])
+predictions = np.argmax(scores, axis=1)
+
+def SCORE(predictions, ground_truth):
+  print("TEST SET ACCURACY: {:.2f}".format(sum(predictions == ground_truth) / len(predictions)))
+  print("-"*80)
+  label_reverse = {v:k for k, v in label_map.items()}
+  for i in range(len(predictions)):
+    if predictions[i] != ground_truth[i]:
+      print("🥺: {}".format(test[i][1]))
+      print("-> 👩‍⚕️: {} 🤖: {}".format( label_reverse[ground_truth[i]], label_reverse[predictions[i]]), "\n")
+      
+SCORE(predictions, test_label_ids)
+
+
+#### inference ####
+filename = "/content/gdrive/My Drive/NLP/Wellness_response.json"
+with open(filename) as f:
+  RESPONSE = json.loads(f.read())
+  
+okt = Okt()
+def tokenize(sentence):
+  return okt.morphs(sentence)
+
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
+def inference(sentence, model, max_seq_length = 128):
+
+  otk_tokenized_text = " ".join(tokenize(sentence)) 
+  tokens_a = tokenizer.tokenize(otk_tokenized_text) 
+ 
+  if len(tokens_a) > max_seq_length - 2:
+      tokens_a = tokens_a[:(max_seq_length - 2)]
+ 
+  tokens = ["[CLS]"] + tokens_a + ["[SEP]"] 
+  segment_ids = [0] * len(tokens)
+  input_ids = tokenizer.convert_tokens_to_ids(tokens)
+  input_mask = [1] * len(input_ids)
+  # padding is not needed in the inference
+ 
+  input_ids = np.array([input_ids])
+  input_mask = np.array([input_mask])
+  segment_ids = np.array([segment_ids])
+  
+  scores = model.predict([input_ids, input_mask, segment_ids])
+  predictions = np.argmax(scores, axis=1)
+ 
+  return scores[0][predictions[0]], predictions[0]
+  
+def ROBOT_DOCTOR(sentence, label_map=label_map):
+  reverse_label = {v:k for k, v in label_map.items()}
+  score, prediction = inference(sentence, model, max_seq_length = 128)
+  pred_label = reverse_label[prediction]
+  
+  print("🥺:", sentence)
+  print(" -> inferred intention: {} ({:.2f}%)\n".format(pred_label , 100*score))
+  print("💚{}".format(random.choice(RESPONSE[pred_label])))  
