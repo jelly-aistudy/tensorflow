@@ -1,0 +1,145 @@
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+!pip install bert-for-tf2
+!pip install konlpy
+
+import json
+import random
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+
+import pickle
+import bert
+import tensorflow_hub as hub
+from sklearn.model_selection import train_test_split
+from  bert.tokenization import bert_tokenization
+from konlpy.tag import Okt
+
+#### make dataset ####
+random.seed(2021)
+ 
+def isNaN(num):
+    return num != num
+ 
+EXCEL_FILE_NALE = "/content/웰니스_대화_스크립트_데이터셋.xlsx"
+data = pd.read_excel(EXCEL_FILE_NALE)
+ 
+DATA = []
+RESPONSE = {}
+ 
+for i in range(len(data["구분"])):
+  label = data["구분"][i]
+  label_split = label.split("/")
+  label_1 = "/".join(label_split[:2])
+  sent = data["유저"][i]
+  if label_1 != "모호함":
+    DATA.append(["Sent_{}".format(i), sent, label_1, label])
+    if label_1 in RESPONSE:  
+      if not isNaN(data["챗봇"][i]): 
+        RESPONSE[label_1].append(data["챗봇"][i])
+    else: 
+      if not isNaN(data["챗봇"][i]):  
+        RESPONSE[label_1] = [data["챗봇"][i]]
+ 
+labels = [dat[2] for dat in DATA]
+
+train, test = train_test_split(DATA, random_state = 2020, stratify = labels, test_size = 400)
+ 
+with open("/content/gdrive/My Drive/NLP/Wellness_data_train.json","w") as f:
+  f.write(json.dumps(train))
+with open("/content/gdrive/My Drive/NLP/Wellness_data_test.json","w") as f:
+  f.write(json.dumps(test))
+with open("/content/gdrive/My Drive/NLP/Wellness_response.json","w") as f:
+  f.write(json.dumps(RESPONSE))
+
+#### load BERT ####
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+
+#### BERT tokenizer ####
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
+#### train data for BERT ####
+filename = "/content/gdrive/My Drive/NLP/Wellness_data_train.json"
+with open(filename) as f:
+  train = json.loads(f.read())
+
+label_map = {} ## make label map
+label_id = 0
+for dat in train:
+  if dat[2] not in label_map:
+    label_map[dat[2]] = label_id
+    label_id += 1
+
+#### data preprocessing ####
+class InputFeatures(object):
+
+    def __init__(self, input_ids, input_mask, segment_ids, label_id):
+        self.input_ids = input_ids # integer index for tokens
+        self.input_mask = input_mask # 1 for real token, 0 for [PAD] token
+        self.segment_ids = segment_ids # sentence split
+        self.label_id = label_id
+        
+def convert_examples_to_features(examples, max_seq_length, tokenizer, label_map):
+    features = []
+
+    for (ex_index, example) in enumerate(examples):
+        text = example[1] # sentence
+        label = example[2] # label
+        label_id = label_map[label]
+
+        ## STEP 1. morpheme analysis + tokenizer for Korean
+        otk_tokenized_text = tokenize(text) 
+        tokens_a = tokenizer.tokenize(" ".join(otk_tokenized_text)) 
+
+        ## cut sentence which is longer than maximum sequence length
+        ## [CLS], [SEP] tokens must be included
+        if len(tokens_a) > max_seq_length - 2:
+            tokens_a = tokens_a[:(max_seq_length - 2)]
+
+        ## STEP 2. BERT input formation
+        tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
+
+        ## STEP 3. segment ids 
+        segment_ids = [0] * len(tokens) 
+ 
+        ## STEP 4. tokens to input_ids
+        input_ids = tokenizer.convert_tokens_to_ids(tokens) 
+ 
+        ## STEP 5. input masks
+        input_mask = [1] * len(input_ids) 
+
+        ## padding
+        padding = [0] * (max_seq_length - len(input_ids))
+        input_ids += padding
+        input_mask += padding
+        segment_ids += padding
+
+        assert len(input_ids) == max_seq_length
+        assert len(input_mask) == max_seq_length
+        assert len(segment_ids) == max_seq_length
+
+        features.append(
+                InputFeatures(input_ids=input_ids,
+                              input_mask=input_mask,
+                              segment_ids=segment_ids,
+                              label_id=label_id))
+    return features
+
+
+MAX_SEQ_LENGTH = 128
+## train data preprocessing ##
+train_features = convert_examples_to_features(train, MAX_SEQ_LENGTH, tokenizer, label_map)
+with open("/content/gdrive/My Drive/NLP/BERT_CLS_train_features.pkl", "wb") as f:
+  pickle.dump(train_features, f)
+
+## test data preprocessing ##
+filename = "/content/gdrive/My Drive/NLP/Wellness_data_test.json"
+with open(filename) as f:
+  test = json.loads(f.read())
+with open("/content/gdrive/My Drive/NLP/BERT_CLS_label_map.json", "w") as f:
+  f.write(json.dumps(label_map))
