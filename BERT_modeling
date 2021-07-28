@@ -1,0 +1,81 @@
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+import random
+import json
+import pickle
+import numpy as np
+import tensorflow as tf
+import tensorflow_hub as hub
+from tensorflow.keras import Model
+
+class InputFeatures(object):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id):
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+        self.label_id = label_id
+
+#### load preprocessed train data ####
+with open("/content/gdrive/My Drive/NLP/BERT_CLS_train_features.pkl", "rb") as f:
+  train_features = pickle.load(f)
+  
+#### load BERT ####
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+
+#### modeling ####
+## input layer
+input_word_ids = tf.keras.layers.Input(shape=(None,), dtype=tf.int32, name="input_word_ids")
+input_mask = tf.keras.layers.Input(shape=(None,), dtype=tf.int32, name="input_mask")
+segment_ids = tf.keras.layers.Input(shape=(None,), dtype=tf.int32, name="segment_ids")
+## dropout layer
+dropout_layer = tf.keras.layers.Dropout(0.2) 
+## dense layer
+fc_layer = tf.keras.layers.Dense(176, activation = tf.nn.softmax) 
+
+pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
+# pooled output : meaning of input text (all)
+# sequence output : meaning of each input token 
+
+dropout_output = dropout_layer(pooled_output)
+logits = fc_layer(dropout_output)
+
+model = Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=logits)
+
+model.compile(optimizer=tf.keras.optimizers.Adam(2e-5),
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+              
+#### train / validation ####
+random.seed(2021)
+random.shuffle(train_features)
+num_val = int(len(train_features)* 0.1)
+val_features = train_features[:num_val]
+train_features = train_features[num_val:]
+
+tr_input_ids = np.array([f.input_ids for f in train_features])
+tr_input_masks = np.array([f.input_mask for f in train_features])
+tr_seg_ids = np.array([f.segment_ids for f in train_features])
+tr_label_ids = np.array([f.label_id for f in train_features])
+
+val_input_ids = np.array([f.input_ids for f in val_features])
+val_input_masks = np.array([f.input_mask for f in val_features])
+val_seg_ids = np.array([f.segment_ids for f in val_features])
+val_label_ids = np.array([f.label_id for f in val_features])
+
+#### model fit ####
+callback = tf.keras.callbacks.EarlyStopping(patience=2)
+
+history = model.fit(
+    [tr_input_ids,tr_input_masks,tr_seg_ids],
+    tr_label_ids,
+    epochs=20,
+    validation_data=(
+        [val_input_ids,val_input_masks,val_seg_ids], val_label_ids),
+    verbose=1,
+    batch_size = 24,
+    callbacks = [callback]
+)
+
+model.save_weights("/content/gdrive/My Drive/NLP/BERT_CLS_checkpoint")
