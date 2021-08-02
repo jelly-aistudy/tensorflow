@@ -1,2 +1,117 @@
 from google.colab import drive
 drive.mount('/content/drive')
+
+!pip install konlpy
+!pip install bert-for-tf2
+
+import bert
+import tensorflow as tf
+import tensorflow_hub as hub
+import numpy as np
+from read_korquad1_util import *
+from konlpy.tag import Okt
+from bert.tokenization import bert_tokenization
+from tensorflow.keras import Model
+
+# Korean morpheme tokenizer
+okt=Okt()
+def tokenize(lines):
+  return okt.morphs(lines, stem=False)
+
+# BERT 
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
+MAX_SEQ_LENGTH = 512
+# input layer
+input_word_ids = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="input_word_ids")
+input_mask = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="input_mask")
+segment_ids = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="segment_ids")
+
+# fully connected layer
+fc_layer_start = tf.keras.layers.Dense(1)
+fc_layer_end = tf.keras.layers.Dense(1) 
+
+pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
+start_logits = fc_layer_start(sequence_output)  
+end_logits = fc_layer_end(sequence_output)  
+start_logits = tf.squeeze(start_logits, axis = 2)
+end_logits = tf.squeeze(end_logits, axis = 2)
+
+# Model
+model = Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=[start_logits, end_logits])
+model.compile(optimizer=tf.keras.optimizers.Adam(2e-5),
+              loss=[tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                    tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)],
+              metrics=['accuracy'])
+
+# load trained weights
+try:
+  model.load_weights("/content/drive/My Drive/NLP/BERT_MRC_checkpoint")
+except:
+  # load pre-saved weights
+  !gdown https://drive.google.com/uc?id=1-8VNMs12HTCkT858XW20lwTXMiYj4xRl
+  !gdown https://drive.google.com/uc?id=1-3MbkWtsB-7SxZvvrEVqGzYVG-8x8QJX
+  model.load_weights("/content/BERT_MRC_checkpoint")
+
+# Inference
+RawResult = collections.namedtuple("RawResult", ["unique_id", "start_logits", "end_logits"]) 
+# factory function for creating tuple subclasses with named fields
+
+def inference(question, context):
+  
+  q_tokens = " ".join(tokenize(question))
+  doc_tokens = tokenize(context)
+  text_spans, char_to_word_offset = convert_to_spans(context, doc_tokens)
+  doc_tokens = [Token(text, span) for (text, span) in zip(doc_tokens, text_spans)]
+
+  example = KorQuADExample(qas_id="test",
+                           paragraph_text=context,
+                           question_text= q_tokens,
+                           doc_tokens=doc_tokens)
+
+  features = convert_each_example_to_features(example, 
+                                              tokenizer = tokenizer,
+                                              max_seq_length = 512, 
+                                              doc_stride = 128, 
+                                              max_query_length = 64, 
+                                              is_training = False)
+  
+  input_ids = np.array([f.input_ids for f in features])
+  seg_ids = np.array([f.segment_ids for f in features])
+  input_masks = np.array([f.input_mask for f in features])
+  start_logit, end_logit = model.predict([input_ids, input_masks, seg_ids])
+
+  all_results = []
+  for i in range(len(start_logit)):
+    all_results.append(RawResult(unique_id=features[i].unique_id,
+                                 start_logits=start_logit[i],
+                                 end_logits=end_logit[i]))
+
+  result = write_predictions(example, features, all_results) 
+  # If given doc is bigger than 512 tokens, split context into features and predict start, end token for each feature
+  # Select the largest start + end logit 
+  # This write_predictions function is defined in run_korquad1_util.py
+  print(result)
+  
+# make an inference
+context = """
+김연경은 무려 30득점을 내며 팀 전체 득점(100점)의 30%를 책임졌다. 그야말로 독보적인 활약이다. 
+국제배구연맹(FIVB)은 1일 누리집에 한국팀과 김연경의 활약을 집중 조명하면서 김연경이 올림픽에서 네차례나 한 경기당 30점 이상을 올렸으며 
+이는 역대 최초라고 소개했다. 김연경은 2012런던올림픽 세르비아전과 중국전, 2016리우올림픽 일본전에서도 30점 넘는 점수를 올렸다. 
+김연경은 경기 외적으로도 빛났다. 올림픽을 앞두고 일본이 선수 12명 중 10명의 등 번호를 바꾸자 “등 번호는 중요치 않다. 
+어차피 다 얼굴을 알고 있는 선수들”이라고 ‘쿨한’ 모습을 보이더니, “모든 선수가 자기 역할을 하면 이길 수 있을 것”이라며 
+한일전에 대한 부담감을 느끼고 있을 팀원들을 다독였다.
+"""
+
+question = "김연경 득점 얼마나 냈어"
+inference(question, context)
+
+question = "김연경이 올림픽에서 몇번이나 한 경기당 30점 이상 득점했어"
+inference(question, context)
+
+question = "일본 선수들 몇명이나 등번호 바꿨어"
+inference(question, context)
