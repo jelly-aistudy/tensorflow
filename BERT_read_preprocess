@@ -1,0 +1,58 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
+!pip install bert-for-tf2
+!pip install konlpy
+ 
+import json
+import pickle
+import random
+import numpy as np
+import tensorflow as tf
+
+import bert
+import tensorflow_hub as hub
+from konlpy.tag import Okt
+from read_korquad1_util import *
+from bert.tokenization import bert_tokenization
+
+# train data
+!wget https://korquad.github.io/dataset/KorQuAD_v1.0_train.json
+with open("/content/KorQuAD_v1.0_train.json") as f:
+  data = json.loads(f.read())
+  
+# Korean morpheme tokenizer
+okt=Okt()
+def tokenize(lines):
+  return okt.morphs(lines)
+
+# load pre-saved tokenized data from read_korquad1_util.py
+!gdown https://drive.google.com/uc?id=1MmYXYCC29suml6y9u99yMiELToh7tUNY
+with open("/content/korquad_examples.pkl", "rb") as f:
+  examples = pickle.load(f)
+
+# BERT
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True) 
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
+# split train / validation data
+random.seed(2021)
+random.shuffle(examples)
+train_examples = examples[:10000]
+dev_examples = examples[10000:11000]
+
+MAX_SEQ_LEN = 512
+DOC_STRIDE = 128
+MAX_QUERY_LEN = 64
+train_features = convert_examples_to_features(train_examples, MAX_SEQ_LEN, tokenizer,
+                                 DOC_STRIDE, MAX_QUERY_LEN, is_training=True) # this function is in read_korquad1_util.py
+dev_features = convert_examples_to_features(dev_examples, MAX_SEQ_LEN, tokenizer,
+                                 DOC_STRIDE, MAX_QUERY_LEN, is_training=True)
+
+with open("/content/drive/My Drive/NLP/MRC_train_features.pkl", "wb") as f:
+  pickle.dump(train_features, f)
+with open("/content/drive/My Drive/NLP/MRC_dev_features.pkl", "wb") as f:
+  pickle.dump(dev_features, f)
