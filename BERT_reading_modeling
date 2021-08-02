@@ -1,0 +1,13 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
+!pip install konlpy
+import pickle
+import tensorflow as tf
+import tensorflow_hub as hub
+
+# load preprocessed data
+with open("/content/drive/My Drive/NLP/MRC_train_features.pkl", "rb") as f:
+  train = pickle.load(f)
+with open("/content/drive/My Drive/NLP/MRC_dev_features.pkl", "rb") as f:
+  dev = pickle.load(f)
