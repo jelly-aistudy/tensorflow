@@ -1,0 +1,198 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
+!pip install bert-for-tf2
+!pip install konlpy
+
+import bert
+import tensorflow_hub as hub
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+
+from tensorflow.keras import Model
+from konlpy.tag import Okt
+from bert.tokenization import bert_tokenization
+from scipy.stats import spearmanr
+
+# Korean sentence similarity dataset download
+# reference: https://arxiv.org/pdf/2004.03289.pdf
+!wget https://raw.githubusercontent.com/kakaobrain/KorNLUDatasets/master/KorSTS/sts-train.tsv
+!wget https://raw.githubusercontent.com/kakaobrain/KorNLUDatasets/master/KorSTS/sts-dev.tsv
+!wget https://raw.githubusercontent.com/kakaobrain/KorNLUDatasets/master/KorSTS/sts-test.tsv
+
+# load dataset
+with open("sts-train.tsv") as f:
+  train = [s.strip() for s in f.readlines()]
+train = [s.split("\t") for s in train]
+with open("sts-dev.tsv") as f:
+  dev = [s.strip() for s in f.readlines()]
+dev = [s.split("\t") for s in dev]
+with open("sts-test.tsv") as f:
+  test = [s.strip() for s in f.readlines()]
+test = [s.split("\t") for s in test] 
+
+# process data
+train_data = []
+for dat in train[1:]:
+  if len(dat) != 7: # data has 7 fields - genre, filename, year, id, score, sentence1, sentence2
+    print("train data doesn't have 7 fields - data: ", dat)
+    continue
+  train_data.append([dat[5], dat[6], float(dat[4])])
+dev_data = []
+for dat in dev[1:]:
+  if len(dat) != 7:
+    print("validation data doesn't have 7 fields - data: ", dat)
+    continue
+  dev_data.append([dat[5], dat[6], float(dat[4])])
+test_data = []
+for dat in test[1:]:
+  if len(dat) != 7:
+    print("test data doesn't have 7 fields - data: ", dat)
+    continue
+  test_data.append([dat[5], dat[6], float(dat[4])])
+  
+# check data 
+# score from 0 to 5
+all_train_scores = [s[2] for s in train_data]
+plot = plt.hist(all_train_scores)
+print("Avg Score = {:.2f}, Min Score = {}, Max Score = {}".format(np.mean(all_train_scores), min(all_train_scores), max(all_train_scores)))
+
+# BERT
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
+# Korean morpheme tokenizer
+okt=Okt()
+def tokenize(lines):
+  return okt.morphs(lines, stem=True)
+
+# process data
+def process_data(data, max_seq_len):
+  sent1 = data[0]
+  sent2 = data[1]
+ 
+  # 1. tokenize
+  tokenized_sent1 = tokenizer.tokenize(" ".join(tokenize(sent1)))
+  tokenized_sent2 = tokenizer.tokenize(" ".join(tokenize(sent2)))
+ 
+  # make input_id
+  tokens = []
+  seg_ids = []
+  
+  i = 0
+  while len(tokenized_sent1) + len(tokenized_sent2) > max_seq_len - 3: # 3 for [CLS], [SEP]
+    if i % 2 == 0 and len(tokenized_sent1) > 0:
+      tokenized_sent1.pop() 
+    else:
+      tokenized_sent2.pop() 
+    i += 1
+     
+  # a. tokenized sent1
+  tokens.append("[CLS]")
+  seg_ids.append(0)
+  for tok in tokenized_sent1:
+    tokens.append(tok)
+    seg_ids.append(0)
+  tokens.append("[SEP]")
+  seg_ids.append(0)
+ 
+  # b. tokenized sent 2
+  for tok in tokenized_sent2:
+    tokens.append(tok)
+    seg_ids.append(1)
+  tokens.append("[SEP]")
+  seg_ids.append(1)
+ 
+  input_id = tokenizer.convert_tokens_to_ids(tokens)
+ 
+  # padding
+  masks = [1] * len(input_id)
+  while len(input_id) < max_seq_len:
+    input_id.append(0)
+    seg_ids.append(0)
+    masks.append(0)
+   
+  assert len(input_id) == max_seq_len
+  assert len(seg_ids) == max_seq_len
+  assert len(masks) == max_seq_len
+ 
+  return input_id, seg_ids, masks
+  
+def make_dataset(data, max_seq_len = 128):
+  input_ids, seg_ids, input_masks, labels = [], [], [], []
+  for line in data:
+    input_id, seg_id, mask = process_data(line, max_seq_len)
+    input_ids.append(input_id)
+    seg_ids.append(seg_id)
+    input_masks.append(mask)
+    labels.append(line[2])
+ 
+  input_ids = np.array(input_ids)
+  seg_ids = np.array(seg_ids)
+  input_masks = np.array(input_masks)
+  labels = np.array(labels)
+ 
+  return input_ids, seg_ids, input_masks, labels
+  
+MAX_SEQ_LENGTH = 128
+input_ids_tr, seg_ids_tr, input_masks_tr, labels_tr = make_dataset(train_data, MAX_SEQ_LENGTH)
+input_ids_dev, seg_ids_dev, input_masks_dev, labels_dev = make_dataset(dev_data, MAX_SEQ_LENGTH)
+input_ids_te, seg_ids_te, input_masks_te, labels_te = make_dataset(test_data, MAX_SEQ_LENGTH)
+
+
+# input layer
+input_word_ids = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="input_word_ids")
+input_mask = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="input_mask")
+segment_ids = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="segment_ids")
+ 
+# fully connected layer
+fc_layer_score = tf.keras.layers.Dense(1, activation="tanh")
+
+pooled_output, _ = bert_layer([input_word_ids, input_mask, segment_ids])
+sent_sim = fc_layer_score(pooled_output)
+
+model = Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=sent_sim)
+model.compile(optimizer=tf.keras.optimizers.Adam(2e-5),
+              loss=tf.keras.losses.MeanSquaredError())
+
+# normalize between -1 ~ 1 for tanh
+labels_tr = (labels_tr -2.5) / 2.5
+labels_dev = (labels_dev -2.5) / 2.5
+
+callback = tf.keras.callbacks.EarlyStopping( monitor='val_loss', patience=1)
+history = model.fit(
+    [input_ids_tr, input_masks_tr, seg_ids_tr],
+    labels_tr,
+    epochs=3,
+    validation_data=(
+        [input_ids_dev, input_masks_dev, seg_ids_dev],
+        labels_dev),
+    verbose=1,
+    batch_size = 24,
+    callbacks=[callback]
+)
+
+# predict
+test_prediction = model.predict([input_ids_te, input_masks_te, seg_ids_te])
+test_prediction = test_prediction * 2.5 + 2.5
+
+# evaluate
+def evaluate_prediction(prediction, gt_label):
+  prediction = np.ndarray.flatten(prediction)
+  SPEARMAN, P_VAL = spearmanr(prediction, gt_label)
+  print("** Spearman Correlation = {}".format(100*SPEARMAN))
+  m, b = np.polyfit(labels_te, test_prediction, 1)
+  x = np.array([min(gt_label), max(gt_label)])
+
+  plt.plot(prediction, gt_label, "o", alpha=0.5)
+  plt.plot(x, m*x + b)
+  plt.xlabel("Ground Truth")
+  plt.ylabel("Prediction")
+  plt.show()
+  plt.close()
+  
+evaluate_prediction(test_prediction, labels_te)
