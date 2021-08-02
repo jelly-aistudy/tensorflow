@@ -16,7 +16,8 @@ from konlpy.tag import Okt
 from read_korquad1_util import *
 from bert.tokenization import bert_tokenization
 
-# train data
+# get train data
+# this data includes paragraphs, questions, and answers
 !wget https://korquad.github.io/dataset/KorQuAD_v1.0_train.json
 with open("/content/KorQuAD_v1.0_train.json") as f:
   data = json.loads(f.read())
@@ -47,8 +48,10 @@ dev_examples = examples[10000:11000]
 MAX_SEQ_LEN = 512
 DOC_STRIDE = 128
 MAX_QUERY_LEN = 64
+# this function is in read_korquad1_util.py
+# change data into "[CLS] question [SEP] paragraph [SEP]" form
 train_features = convert_examples_to_features(train_examples, MAX_SEQ_LEN, tokenizer,
-                                 DOC_STRIDE, MAX_QUERY_LEN, is_training=True) # this function is in read_korquad1_util.py
+                                 DOC_STRIDE, MAX_QUERY_LEN, is_training=True)
 dev_features = convert_examples_to_features(dev_examples, MAX_SEQ_LEN, tokenizer,
                                  DOC_STRIDE, MAX_QUERY_LEN, is_training=True)
 
