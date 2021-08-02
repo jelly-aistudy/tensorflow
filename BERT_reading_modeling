@@ -3,11 +3,74 @@ drive.mount('/content/drive')
 
 !pip install konlpy
 import pickle
+import numpy as np
 import tensorflow as tf
 import tensorflow_hub as hub
+from tensorflow.keras import Model
 
 # load preprocessed data
 with open("/content/drive/My Drive/NLP/MRC_train_features.pkl", "rb") as f:
   train = pickle.load(f)
 with open("/content/drive/My Drive/NLP/MRC_dev_features.pkl", "rb") as f:
   dev = pickle.load(f)
+
+# BERT
+BERT_MODEL_HUB = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(BERT_MODEL_HUB, trainable=True)
+
+MAX_SEQ_LENGTH = 512
+# input layer
+input_word_ids = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="input_word_ids")
+input_mask = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="input_mask")
+segment_ids = tf.keras.layers.Input(shape=(MAX_SEQ_LENGTH,), dtype=tf.int32, name="segment_ids")
+
+# fully connected layer
+fc_layer_start = tf.keras.layers.Dense(1) # predict start token of answer
+fc_layer_end = tf.keras.layers.Dense(1) # predict end token of answer
+
+# Model
+pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
+# pooled output : one token for all
+# sequence_output : each token
+
+start_logits = fc_layer_start(sequence_output) 
+end_logits = fc_layer_end(sequence_output) 
+start_logits = tf.squeeze(start_logits, axis = 2) 
+end_logits = tf.squeeze(end_logits, axis = 2)
+
+model = Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=[start_logits, end_logits]) 
+
+model.compile(optimizer=tf.keras.optimizers.Adam(2e-5),
+              loss=[tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                    tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)],
+              metrics=['accuracy'])
+              
+# change input as numpy array
+tr_input_ids = np.array([f.input_ids for f in train])
+tr_input_masks = np.array([f.input_mask for f in train])
+tr_seg_ids = np.array([f.segment_ids for f in train])
+tr_start_pos = np.array([f.start_position for f in train])
+tr_end_pos = np.array([f.end_position for f in train])
+
+val_input_ids = np.array([f.input_ids for f in dev])
+val_input_masks = np.array([f.input_mask for f in dev])
+val_seg_ids = np.array([f.segment_ids for f in dev])
+val_start_pos = np.array([f.start_position for f in dev])
+val_end_pos = np.array([f.end_position for f in dev])
+
+# model fit
+callback = tf.keras.callbacks.EarlyStopping(patience=2)
+
+history = model.fit(
+    [tr_input_ids,tr_input_masks,tr_seg_ids],
+    [tr_start_pos, tr_end_pos],
+    epochs=3,
+    validation_data=(
+        [val_input_ids,val_input_masks,val_seg_ids], 
+        [val_start_pos, val_end_pos]),
+    verbose=1,
+    batch_size = 6,
+    callbacks = [callback]
+)
+
+model.save_weights("/content/drive/My Drive/NLP/BERT_MRC_checkpoint")
