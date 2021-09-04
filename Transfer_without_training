@@ -1,0 +1,35 @@
+import tensorflow as tf
+import matplotlib.pylab as plt
+import numpy as np
+import PIL.Image as Image
+
+classifier = tf.keras.applications.MobileNetV2()
+
+IMAGE_SHAPE = (224,224)
+dog_img = tf.keras.utils.get_file('image.jpg', 'https://blogfiles.pstatic.net/MjAxOTEwMTFfMzMg/MDAxNTcwNzY3MTI2MTk4.bUgUVq4WmXRSXuqlS5dWLOmuWNN2-OIfqCPNy-dAGEUg.EYmc3-w4lSogPESlHy8u1_8ZBIiPygb2B5HMUqsToIcg.JPEG.hkc0929/%EB%B0%98%EB%A0%A4%EA%B2%AC_%ED%82%A4%EC%9A%B0%EB%A9%B4_%EC%8B%AC%EC%9E%A5%EB%B3%91_%EC%82%AC%EB%A7%9D%EB%A5%A0_30_%EC%A4%84%EC%96%B4%EC%9A%94xxx.jpeg')
+dog_img = Image.open(dog_img).resize(IMAGE_SHAPE)
+print(dog_img) # see image
+
+dog_img = np.array(dog_img)/255.0 # 8bit image consists of 0-255 integers
+print(dog_img.shape) # (224, 224, 3) color image with height, weight of 224
+
+result = classifier.predict(dog_img[np.newaxis, ...]) # add batch dimension (1,224,224,3)
+print(result.shape) # (1, 1000) # probability of 1000 classes
+
+predicted_class = np.argmax(result[0], axis=-1) # Returns the indices of the maximum values along an axis.
+# see more examples : https://numpy.org/doc/stable/reference/generated/numpy.argmax.html
+print(predicted_class) # 208 
+
+labels_path = tf.keras.utils.get_file('ImageNetLabels.txt','https://storage.googleapis.com/download.tensorflow.org/data/ImageNetLabels.txt')
+imagenet_labels = np.array(open(labels_path).read().splitlines())
+# splitlines example: str1 = 'ab c\n\nde fg\rkl\r\n' -> ['ab c', '', 'de fg', 'kl']
+print(imagenet_labels[:20]) 
+# ['background' 'tench' 'goldfish' 'great white shark' 'tiger shark'
+# 'hammerhead' 'electric ray' 'stingray' 'cock' 'hen' 'ostrich' 'brambling'
+# 'goldfinch' 'house finch' 'junco' 'indigo bunting' 'robin' 'bulbul' 'jay'
+# 'magpie']
+
+plt.imshow(dog_img)
+plt.axis('off')
+predicted_class_name = imagenet_labels[predicted_class]
+_ = plt.title("Prediction: " + predicted_class_name.title())
