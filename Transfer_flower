@@ -1,0 +1,19 @@
+import tensorflow as tf
+import matplotlib.pylab as plt
+import numpy as np
+import PIL.Image as Image
+
+IMAGE_SHAPE = (224,224)
+classifier = tf.keras.applications.MobileNetV2()
+flower_data = tf.keras.utils.get_file(
+  'flower_photos','https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz', untar=True)
+
+image_generator = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1./255)
+image_gen = image_generator.flow_from_directory(str(flower_data), batch_size=32, target_size=IMAGE_SHAPE)
+print(plt.imshow(image_data[0][0][0])) # see flower image
+
+for image_batch, label_batch in flower_data:
+  print("image batch shape: ", image_batch.shape) # (32,224,224,3) # batch size = 32
+  print("label batch shape: ", label_batch.shape) # (32,5) 5 classes
+  break
+
