@@ -14,7 +14,7 @@ dog_img = np.array(dog_img)/255.0 # 8bit image consists of 0-255 integers
 print(dog_img.shape) # (224, 224, 3) color image with height, weight of 224
 
 result = classifier.predict(dog_img[np.newaxis, ...]) # add batch dimension (1,224,224,3)
-print(result.shape) # (1, 1000) # probability of 1000 classes
+print(result.shape) # (1, 1000) # probability of 1000 classes for 1 image
 
 predicted_class = np.argmax(result[0], axis=-1) # Returns the indices of the maximum values along an axis.
 # see more examples : https://numpy.org/doc/stable/reference/generated/numpy.argmax.html
