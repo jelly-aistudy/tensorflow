@@ -1,0 +1,168 @@
+import dlib
+import cv2
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import copy
+import numpy as np
+import os
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+### FACE DETECTION ###
+# Using dlib for face detection
+cnn_face_detector = dlib.cnn_face_detection_model_v1('mmod_human_face_detector.dat')
+# This object detects human faces in an image. The constructor loads the face detection model from a file.
+
+### DATA PROCESSING ###
+# https://www.tensorflow.org/api_docs/python/tf/keras/preprocessing/image/ImageDataGenerator
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    zoom_range=0.1,
+    horizontal_flip=True, 
+    rotation_range=0.05,
+    width_shift_range=0.05,
+    height_shift_range=0.05
+)
+valid_datagen = ImageDataGenerator(
+    rescale=1./255
+)
+
+train_generator = train_datagen.flow_from_directory(
+    'SyntheticMask_Dataset/data/train',
+    target_size=(100,100),
+    batch_size=128,
+    shuffle=True,
+    class_mode='binary'
+)
+valid_generator = valid_datagen.flow_from_directory(
+    'SyntheticMask_Dataset/data/val',
+    target_size=(100,100),
+    batch_size=128,
+    class_mode='binary'
+)
+# Found 1315 images belonging to 2 classes.
+# Found 142 images belonging to 2 classes.
+
+total_train = len(os.listdir('SyntheticMask_Dataset/data/train/with_mask')) + len(os.listdir('SyntheticMask_Dataset/data/train/without_mask')) 
+total_val = len(os.listdir('SyntheticMask_Dataset/data/val/with_mask')) + len(os.listdir('SyntheticMask_Dataset/data/val/without_mask'))
+print(total_train, total_val) # 1315 142
+print(train_generator.class_indices) # {'with_mask': 0, 'without_mask': 1}
+
+### TRANSFER MODEL ###
+feature_extractor_layer = tf.keras.applications.MobileNetV2(include_top=False, input_shape=(100,100,3))
+feature_extractor_layer.trainable=False
+
+model = Sequential([
+                    feature_extractor_layer,
+                    GlobalAveragePooling2D(),
+                    Dense(256, activation='relu'),
+                    Dropout(0.2),
+                    Dense(128, activation='relu'),
+                    Dense(1, activation='sigmoid')
+])
+
+model.compile(optimizer='adam',
+                  loss=tf.keras.losses.BinaryCrossentropy(),
+                  metrics=['accuracy'])
+
+class CollectBatchStats(tf.keras.callbacks.Callback):
+  def __init__(self):
+    self.batch_loss = []
+    self.batch_acc = []
+
+  def on_train_batch_end(self, batch, logs=None):
+    self.batch_loss.append(logs['loss'])
+    self.batch_acc.append(logs['accuracy'])
+    self.model.reset_metrics()
+
+# callbacks
+batch_stats_callback = CollectBatchStats()
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="./logs", histogram_freq=1)
+
+# ModelCheckpoint : https://keras.io/api/callbacks/model_checkpoint/
+checkpoint_filepath = '/model/checkpoint'
+checkpoint = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_filepath, monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=True
+)    
+
+history = model.fit_generator(
+    train_generator,
+    steps_per_epoch=total_train // 128,
+    epochs=5,
+    validation_data=valid_generator,
+    validation_steps=total_val // 128,
+    callbacks = [batch_stats_callback, tensorboard_callback, checkpoint]
+)    
+    
+model.load_weights(checkpoint_filepath)
+
+plt.figure()
+plt.ylabel("Loss")
+plt.xlabel("Training Steps")
+plt.ylim([0,1.5])
+plt.plot(batch_stats_callback.batch_loss)
+
+plt.figure()
+plt.ylabel("Accuracy")
+plt.xlabel("Training Steps")
+plt.ylim([0,1])
+plt.plot(batch_stats_callback.batch_acc)
+
+# save model
+model_name = 'mask_nonmask_model'
+export_path = model_name
+model.save(export_path, save_format='tf')
+# https://tensorflow.google.cn/tutorials/images/transfer_learning_with_hub?hl=ko : tensorflow and transfer learning
+
+# tensorboard
+%load_ext tensorboard
+%tensorboard --logdir logs
+
+### TEST DATA ###
+!git clone https://github.com/narfian/Mask_Test
+
+### MASK DETECTOR FUNCTION USING DLIB AND TRAINED MODEL ###
+def mask_detector(path):
+
+  img = cv2.imread(path)
+  img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+  dets = cnn_face_detector(img, 1)
+  print("Number of faces detected: {}".format(len(dets)))
+  textArr = []
+
+  for i, d in enumerate(dets):
+    print("Detection {}: Left: {} Top: {} Right: {} Bottom: {} Confidence: {}".format(
+      i, d.rect.left(), d.rect.top(), d.rect.right(), d.rect.bottom(), d.confidence))
+    boundary = 10
+    tmp = copy.deepcopy(img[d.rect.top()+boundary:d.rect.bottom()+boundary, d.rect.left()+boundary: d.rect.right()+boundary]) # margin for face, deepcopy for memory
+    print("original cropped image size: ", tmp.shape)
+    tmp = tf.image.resize(tmp, [100,100]) # https://www.tensorflow.org/api_docs/python/tf/image/resize
+    print("new cropped image size: ", tmp.shape)
+    tmp = tf.keras.preprocessing.image.img_to_array(tmp)
+    tmp = tmp/255. # normalize
+    tmp = np.expand_dims(tmp, axis=0)
+    
+    tmp_ans = model.predict(tmp) # {'with_mask': 0, 'without_mask': 1}
+    if tmp_ans < 0.5:
+      textArr.append('MASK')
+    else:
+      textArr.append('NO MASK')
+
+    img = cv2.rectangle(img, (d.rect.left(), d.rect.top()), (d.rect.right(), d.rect.bottom()), (0,0,255), 3)
+    FONT_FACTOR = img.shape[1] // 500
+    FONT_COLOR = (0,255,0) if 0.5 > tmp_ans else (255,0,0)
+    cv2.putText(img, textArr[i], (d.rect.left(), d.rect.top()), cv2.FONT_HERSHEY_PLAIN, FONT_FACTOR, FONT_COLOR, FONT_FACTOR)
+
+  SHOW_SIZE = 12 if img.shape[0] < img.shape[1] else 8
+
+  plt.figure(figsize = (SHOW_SIZE, SHOW_SIZE))
+  plt.imshow(img)
+
+TEST_PATH = 'Mask_Test/data/'
+mask_detector(TEST_PATH + 'mask_1.jpg')
+
+# or, you can use select box using colab
+# image_handle = 'mask_p1.jpg' #@param ['mask_1.jpg', 'mask_2.jpg', 'mask_3.jpg', 'mask_p1.jpg', 'mask_p2.jpg']
+# mask_detector(TEST_PATH + image_handle)
