@@ -1,0 +1,151 @@
+%matplotlib inline
+from matplotlib import pyplot as plt
+import cv2
+import numpy as np
+
+!wget https://upload.wikimedia.org/wikipedia/ko/2/24/Lenna.png -O 'lena.jpg'
+img = cv2.imread('./lena.jpg', 0 ) # gray scale
+plt.imshow(img)
+plt.show() # In colab and Jupyter Notebook, we cannot use imshow from OpenCV
+
+# convert BGR to RGB
+img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+plt.imshow(imgrgb)
+plt.show()
+
+# save image
+cv2.imwrite('./lena_rgb.jpg', img_rgb)
+
+# draw line
+canvas = np.zeros((512, 512, 3), np.uint8) # black empty canvas
+canvas = cv2.line(canvas, (0, 0), (511, 511), (255, 0, 0), 5) # start, end, color(red), width
+plt.imshow(canvas)
+
+# draw circle
+canvas = np.zeros((512, 512, 3), np.uint8)
+canvas = cv2.circle(canvas, (100,100), 50, (0,0,255), -1) # img, center, radius, color, thickness (-1: fill in the circle)
+canvas = cv2.ellipse(canvas, (256,256), (100,50), 0, 0, 180, 255, -1) # img, center, axes, angle, startAngle, endAngle, color, thickness
+plt.imshow(canvas)
+
+# draw rectangle
+canvas = np.zeros((512, 512, 3), np.uint8)
+canvas = cv2.rectangle(canvas, (384, 0), (510, 128), (0,255,0), 10) # img, start, end, color, thickness
+plt.imshow(canvas) 
+
+# put text
+canvas = np.zeros((512, 512, 3), np.uint8)
+canvas = cv2.putText(canvas, 'OpenCV', (10,500), cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 2) # img, text, bottom-left corner(text position), font, fontscale, font color
+plt.imshow(canvas)
+
+# image calcuation
+!wget https://opencv-python.readthedocs.io/en/latest/_images/flower1.jpg -O flower1.jpg
+!wget https://opencv-python.readthedocs.io/en/latest/_images/flower2.jpg -O flower2.jpg
+
+img1 = cv2.imread('flower1.jpg')
+img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
+img2 = cv2.imread('flower2.jpg')
+img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+
+# openCV add (saturation)
+plt.imshow(cv2.add(img1,img2))
+
+# numpy add (modulo)
+plt.imshow(img1+img2)
+
+# image blending
+#@title Blending Parameters { run : "auto" } # for colab
+w = 50 #@param {type: "slider", min:0, max:100, step:2} # for colab
+img = cv2.addWeighted(img1, float(100-w) * 0.01, img2, float(w) * 0.01, 0) # img1, weight1, img2, weight2, added number for each
+plt.imshow(img)
+
+# image smoothing
+blur = cv2.blur(img_rgb,(10, 10)) # kernel size
+gblur = cv2.GaussianBlur(img_rgb,(5,5),0) # kernel_size, sigmaX
+plt.imshow(blur), plt.title('Blurred')
+plt.show()
+plt.imshow(gblur),plt.title('Gaussian Blur')
+plt.show()
+
+# image resizing
+res = cv2.resize(img_rgb, None, fx=2, fy=2, interpolation = cv2.INTER_CUBIC) 
+plt.imshow(res)
+plt.show()
+
+# image rotation
+#@title Transformation Parameters { run: "auto" } # for colab
+theta_degrees = 100 #@param {type:"slider", min:0, max:360, step:10} # for colab
+scale = 0.5 #@param {type:"slider", min:0, max:2, step:0.1} # for colab
+shift_x = -15 #@param {type:"slider", min:-100, max:100, step:2} # for colab
+shift_y = 5 #@param {type:"slider", min:-100, max:100, step:2} # for colab
+
+rows, cols, _ = img_rgb.shape
+irows = rows
+icols = cols
+M = cv2.getRotationMatrix2D((icols/2+shift_x, irows/2+shift_y), theta_degrees, scale)
+res = cv2.warpAffine(imgrgb, M,(icols, irows))
+
+titles = ['Original Image','Transformed Image']
+images = [img_rgb, res]
+for i in range(2):
+    plt.subplot(1,2,i+1),plt.imshow(images[i],'gray')
+    plt.title(titles[i])
+    plt.xticks([]),plt.yticks([])
+plt.show()
+
+# seamless cloning - 1
+!wget https://www.learnopencv.com/wp-content/uploads/2015/02/iloveyouticket.jpg -O iloveyouticket.jpg
+!wget https://www.learnopencv.com/wp-content/uploads/2015/02/wood-texture.jpg -O wood-texture.jpg
+
+bg = cv2.imread("wood-texture.jpg")
+bg = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB)
+text = cv2.imread("iloveyouticket.jpg")
+text = cv2.cvtColor(text, cv2.COLOR_BGR2RGB)
+
+mask = 255 * np.ones(text.shape, text.dtype) # white mask
+width, height, channels = bg.shape
+center = (int(height/2), int(width/2))
+
+normal_clone = cv2.seamlessClone(text, bg, mask, center, cv2.NORMAL_CLONE)
+mixed_clone = cv2.seamlessClone(text, bg, mask, center, cv2.MIXED_CLONE)
+
+plt.imshow(normal_clone) # wooden texture gone behind text
+plt.show()
+plt.imshow(mixed_clone) # wooden texture exist behind text
+plt.show()
+
+# seamless cloning - 2
+!wget https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Big_Tree_with_Red_Sky_in_the_Winter_Night.jpg/800px-Big_Tree_with_Red_Sky_in_the_Winter_Night.jpg -O sky_origin.jpg
+!wget https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/Japan.airlines.b777-300.ja733j.arp.jpg/320px-Japan.airlines.b777-300.ja733j.arp.jpg -O airplane.jpg
+
+plane = cv2.imread('airplane.jpg')
+plane = cv2.cvtColor(plane, cv2.COLOR_BGR2RGB)
+sky = cv2.imread('sky_origin.jpg')
+sky = cv2.cvtColor(sky, cv2.COLOR_BGR2RGB)
+
+plane_mask = np.zeros(plane.shape, plane.dtype)
+poly = np.array([ [4,80], [30,54], [151,63], [274,37], [315,90], [282,154], [43,132] ], np.int32)
+cv2.fillPoly(plane_mask, [poly], (255, 255, 255))
+# plt.imshow(cv2.cvtColor(plane_mask, cv2.COLOR_BGR2RGB)) 
+# print(plane.shape, sky.shape, plane_mask.shape) # (207, 320, 3) (449, 800, 3) (207, 320, 3)
+
+center = (600,100)
+output = cv2.seamlessClone(plane, sky, plane_mask, center, cv2.MIXED_CLONE)
+plt.imshow(output)
+
+# face detection
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+
+img = cv2.imread('lena_rgb.jpg')
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+faces = face_cascade.detectMultiScale(gray, 1.3, 5) # https://thebook.io/006939/ch13/02-07/
+for (x,y,w,h) in faces:
+    img = cv2.rectangle(img,(x,y),(x+w,y+h),(255,0,0),2)
+    roi_gray = gray[y:y+h, x:x+w]
+    roi_color = img[y:y+h, x:x+w]
+    eyes = eye_cascade.detectMultiScale(roi_gray)
+    for (ex,ey,ew,eh) in eyes:
+        cv2.rectangle(roi_color,(ex,ey),(ex+ew,ey+eh),(0,255,0),2) # show limitation of rule based face / eye detection
+plt.imshow(img)
