@@ -1,0 +1,102 @@
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense,Flatten,Conv2D,MaxPool2D,Dropout
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from sklearn.preprocessing import LabelBinarizer
+
+import numpy as np
+import pandas as pd
+import os
+
+import tensorflow as tf
+import tensorflow.keras
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# check data with pandas
+!git clone https://github.com/narfian/sign_MNIST_Data
+
+DATA_PATH = 'sign_MNIST_Data/data'
+train_df = pd.read_csv(os.path.join(DATA_PATH, 'sign_mnist_train.csv'))
+test_df = pd.read_csv(os.path.join(DATA_PATH, 'sign_mnist_test.csv'))
+
+print(train_df.info())
+print(train_df.head())
+train_label = train_df['label'] # split train label from dataset
+trainset = train_df.drop(['label'],axis=1) # drop label data
+x_train = trainset.values.reshape(-1,28,28,1) # reshape data
+
+print(test_df.info())
+print(test_df.head())
+test_label = test_df['label'] # split test label from dataset
+testset = test_df.drop(['label'],axis=1) # drop label data
+x_test = testset.values.reshape(-1,28,28,1) # reshape data
+
+lb=LabelBinarizer() # https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelBinarizer.html
+y_train=lb.fit_transform(train_label)
+y_test=lb.fit_transform(test_label)
+
+print(x_train.shape,y_train.shape,x_test.shape,y_test.shape)
+
+# sns.countplot(train_label)
+# plt.title("Frequency of each label")
+
+BATCH_SIZE = 128
+EPOCHS = 30
+
+image_gen_train = ImageDataGenerator(
+                    rescale=1./255, 
+                    rotation_range = 5,
+                    width_shift_range=0.1,
+                    height_shift_range=0.1,
+                    horizontal_flip=True,
+                    zoom_range=0.2
+                    )
+
+image_gen_valid = ImageDataGenerator(rescale=1./255)
+
+train_gen = image_gen_train.flow(X_train, y_train, batch_size=BATCH_SIZE) # https://www.tensorflow.org/api_docs/python/tf/keras/preprocessing/image/ImageDataGenerator#flow
+valid_gen = image_gen_valid.flow(X_test, y_test, batch_size=BATCH_SIZE)
+
+model = Sequential([
+    Conv2D(128, 3, padding='same', activation='relu', input_shape=(28, 28 ,1)),
+    MaxPool2D(2, 2, padding='same'),
+    Conv2D(64, 3, padding='same', activation='relu'),
+    MaxPool2D(2, 2, padding='same'),
+    Conv2D(32, 3, padding='same', activation='relu'),
+    MaxPool2D(2, 2, padding='same'),
+    Flatten(),
+    Dense(512, activation='relu'),
+    Dropout(0.5),
+    Dense(24, activation='softmax')
+])
+
+model.compile(optimizer='adam',
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+                  
+history = model.fit(train_gen,
+         epochs = EPOCHS,
+         validation_data=valid_gen)
+         
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+# epochs_range = range(epochs)
+epochs_range = range(EPOCHS)
+
+plt.figure(figsize=(8, 8))
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.show()
